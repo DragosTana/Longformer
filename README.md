@@ -1,2 +1,2 @@
 # Longformer
-A Pytorch implementation of Longformer: The Long-Document Transformer.
+A PyTorch implementation of Longformer: The Long-Document Transformer.
