@@ -1,1 +1,8 @@
-datasets/
+data/
+bin/
+include/
+lib/
+lib64/python3.6/site-packages/
+share/
+pyvenv.cfg
+```
