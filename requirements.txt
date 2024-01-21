@@ -1,0 +1,12 @@
+numpy
+pandas
+matplotlib
+scikit-learn
+seaborn
+scipy
+torch
+torchtext
+spacy
+pyarrow
+transformers
+portalocker>=2.0.0
