@@ -27,7 +27,6 @@ MAX_LEN = 400
 
 tokenizer = BertTokenizer.from_pretrained(PRE_TRAINED_MODEL_NAME)
 
-
 class IMDB(Dataset):
     
     def __init__(self, reviews, targets, tokenizer, max_len):
@@ -85,6 +84,13 @@ train_data_loader = data_loader(data_train, tokenizer, MAX_LEN, BATCH_SIZE)
 val_data_loader = data_loader(data_val, tokenizer, MAX_LEN, BATCH_SIZE)
 test_data_loader = data_loader(data_test, tokenizer, MAX_LEN, BATCH_SIZE)
 
+ds = IMDB(
+    reviews=data.review.to_numpy(),
+    targets=data.sentiment_score.to_numpy(),
+    tokenizer=tokenizer,
+    max_len=MAX_LEN
+)
+
 class SentimentClassifier(torch.nn.Module):
     
     def __init__(self, n_classes):
@@ -135,6 +141,8 @@ def train_epoch(
         input_ids = d['input_ids'].to(device)
         attention_mask = d['attention_mask'].to(device)
         targets = d['targets'].to(device)
+        
+        print(input_ids.shape)
         
         outputs = model(
             input_ids=input_ids,
