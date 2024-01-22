@@ -24,7 +24,7 @@ print(data.head())
 PRE_TRAINED_MODEL_NAME = 'bert-base-cased'
 RANDOM_SEED = 42
 BATCH_SIZE = 8
-MAX_LEN = 400
+MAX_LEN = 200
 
 tokenizer = BertTokenizer.from_pretrained(PRE_TRAINED_MODEL_NAME)
 
@@ -210,23 +210,23 @@ for epoch in range(EPOCHS):
     
     print(f'Train loss {train_loss} accuracy {train_acc}')
     
-    val_acc, val_loss = eval_model(
-        model,
-        val_data_loader,
-        loss_fn,
-        device,
-        len(data_val)
-    )
-    
-    print(f'Val   loss {val_loss} accuracy {val_acc}')
-    print()
+    #val_acc, val_loss = eval_model(
+    #    model,
+    #    val_data_loader,
+    #    loss_fn,
+    #    device,
+    #    len(data_val)
+    #)
+    #
+    #print(f'Val   loss {val_loss} accuracy {val_acc}')
+    #print()
     
     history['train_acc'].append(train_acc)
     history['train_loss'].append(train_loss)
-    history['val_acc'].append(val_acc)
-    history['val_loss'].append(val_loss)
-    
-    if val_acc > best_accuracy:
-        torch.save(model.state_dict(), 'best_model_state.bin')
-        best_accuracy = val_acc
+    #history['val_acc'].append(val_acc)
+    #history['val_loss'].append(val_loss)
+    #
+    #if val_acc > best_accuracy:
+    #    torch.save(model.state_dict(), 'best_model_state.bin')
+    #    best_accuracy = val_acc
         
