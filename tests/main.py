@@ -7,6 +7,7 @@ from torch.utils.data import Dataset, DataLoader
 from sklearn.model_selection import train_test_split
 from transformers import BertTokenizer
 from transformers import BertModel
+import tqdm
 
 data = pd.read_csv('/home/dragos/Projects/Longformer/data/IMDB.csv')
 
@@ -22,7 +23,7 @@ print(data.head())
     
 PRE_TRAINED_MODEL_NAME = 'bert-base-cased'
 RANDOM_SEED = 42
-BATCH_SIZE = 16
+BATCH_SIZE = 8
 MAX_LEN = 400
 
 tokenizer = BertTokenizer.from_pretrained(PRE_TRAINED_MODEL_NAME)
@@ -100,11 +101,12 @@ class SentimentClassifier(torch.nn.Module):
         self.out = torch.nn.Linear(self.bert.config.hidden_size, n_classes)
         
     def forward(self, input_ids, attention_mask):
-        _, pooled_output = self.bert(
+        output = self.bert(
             input_ids=input_ids,
             attention_mask=attention_mask
         )
-        output = self.drop(pooled_output)
+        
+        output = self.drop(output['pooler_output'])
         return self.out(output)
     
 class_names = ['negative', 'positive']  
@@ -137,12 +139,12 @@ def train_epoch(
     losses = []
     correct_predictions = 0
     
-    for d in data_loader:
-        input_ids = d['input_ids'].to(device)
-        attention_mask = d['attention_mask'].to(device)
-        targets = d['targets'].to(device)
+    for d in tqdm.tqdm(data_loader):
         
-        print(input_ids.shape)
+        
+        input_ids = d['input_ids'].to(device)
+        targets = d['targets'].to(device)
+        attention_mask = d['attention_mask'].to(device)
         
         outputs = model(
             input_ids=input_ids,

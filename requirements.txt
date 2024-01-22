@@ -9,4 +9,5 @@ torchtext
 spacy
 pyarrow
 transformers
+tqdm
 portalocker>=2.0.0
