@@ -15,9 +15,9 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 DATA_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'data/IMDB.csv')
 BERT_CHECKPOINT = 'bert-base-cased'
 MAX_LEN = 128
-BATCH_SIZE = 16
+BATCH_SIZE = 32
 NUM_CLASSES = 2
-EPOCHS = 5
+EPOCHS = 1
 LEARNING_RATE = 2e-5
 
 
