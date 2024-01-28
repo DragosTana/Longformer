@@ -10,4 +10,5 @@ spacy
 pyarrow
 transformers
 tqdm
+apache-tvm
 portalocker>=2.0.0

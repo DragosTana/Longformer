@@ -15,11 +15,10 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 DATA_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'data/IMDB.csv')
 BERT_CHECKPOINT = 'bert-base-cased'
 MAX_LEN = 128
-BATCH_SIZE = 32
+BATCH_SIZE = 32 
 NUM_CLASSES = 2
 EPOCHS = 1
 LEARNING_RATE = 2e-5
-
 
 print('Loading data...')
 data = pd.read_csv(DATA_PATH)
@@ -30,7 +29,6 @@ def clean_text(text):
     text = re.sub(r'http\S+', '', text)
     text = re.sub(r'<.*?>', '', text)
     text = re.sub(r' +', ' ', text)
-    
     
     return text
 
@@ -87,7 +85,6 @@ tokenizer = BertTokenizer.from_pretrained(BERT_CHECKPOINT)
 print('Done.')
 print(" ")
 
-
 print('Creating data loaders...')
 train_dataset = IMDB(
     reviews=data_train.review,
@@ -116,7 +113,6 @@ data_loader_test = DataLoader(test_dataset, batch_size=BATCH_SIZE, shuffle=True,
 
 print('Done.')
 print(" ")
-
 
 class SentimentClassifier(torch.nn.Module):
     def __init__(self, n_classes):
