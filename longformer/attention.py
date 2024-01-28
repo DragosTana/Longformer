@@ -75,7 +75,7 @@ def attention(query: torch.Tensor,
         scores = torch.matmul(query, key.transpose(-2, -1)) \
                  / math.sqrt(d_k)
     else:
-        scores = naive_masked_matmul(query, key.transpose(-2, -1), window) \
+        scores = naive_diagonaled_matmul(query, key.transpose(-2, -1), window) \
                  / math.sqrt(d_k)
         
     if mask is not None:
@@ -85,7 +85,7 @@ def attention(query: torch.Tensor,
         p_attn = dropout(p_attn)
     return torch.matmul(p_attn, value), p_attn
 
-def naive_masked_matmul(x: torch.Tensor,
+def naive_diagonaled_matmul(x: torch.Tensor,
                         y: torch.Tensor,
                         w: int,
                         ) -> torch.Tensor:
@@ -144,8 +144,10 @@ def compute_mask(window: int,
     
     # Arguments:
         window: window size, number of tokens on each side
-        dilation: dilation, number of tokens to skip
-        sequence_length: sequence length
+        sequence_length: length of the sequence
+        batch_size: batch size
+        num_heads: number of heads
+        dilation: dilation rate, number of tokens to skip
         
     # Returns:
         torch.Tensor
@@ -154,14 +156,21 @@ def compute_mask(window: int,
     assert window % 2 == 1
     
     if dilation is None:
-        mask =  (torch.ones(SEQ_LEN, SEQ_LEN, dtype=torch.uint8) - \
-               (torch.tril(torch.ones(SEQ_LEN, SEQ_LEN, dtype=torch.uint8), diagonal= - w//2) + \
-                torch.triu(torch.ones(SEQ_LEN, SEQ_LEN, dtype=torch.uint8), diagonal=w//2+1)))
+        mask =  (torch.ones(sequence_length, sequence_length, dtype=torch.uint8) - \
+               (torch.tril(torch.ones(sequence_length, sequence_length, dtype=torch.uint8), diagonal= -window//2) + \
+                torch.triu(torch.ones(sequence_length, sequence_length, dtype=torch.uint8), diagonal= window//2+1)))
     else:
-        #! TODO: implement masking for dilated attention
-        pass
+        # separate the dilated case because is slower to compute
+        start_idx = lambda i: i - window // 2 - dilation * (window // 2)
+        end_idx = lambda i: i + window // 2 + 1 + dilation * (window // 2)
+        indicies = lambda i: torch.arange(start_idx(i), end_idx(i), dilation + 1)
+        indx = lambda i: indicies(i)[(indicies(i) >= 0) & (indicies(i) < sequence_length)]
+        mask = torch.zeros(sequence_length, sequence_length, dtype=torch.uint8)
         
-    return mask.unsqueeze(0).unsqueeze(0).repeat(BATCH_SIZE, NUM_HEADS, 1, 1)
+        for i in range(sequence_length):
+            mask[i, indx(i)] = 1
+        
+    return mask.unsqueeze(0).unsqueeze(0).repeat(batch_size, num_heads, 1, 1)
                  
 
 if __name__ == "__main__":
@@ -173,12 +182,22 @@ if __name__ == "__main__":
     SEQ_LEN = 512
     NUM_HEADS = 8
     D_MODEL = 512
-    w = 5
+    window = 5
+    dilation = 1
     a = torch.randn(BATCH_SIZE, NUM_HEADS, SEQ_LEN, D_MODEL).to(device)
     b = torch.randn(BATCH_SIZE, NUM_HEADS, SEQ_LEN, D_MODEL).to(device)
 
     tries = 10
-    _w_half = w // 2
     
-    mask = compute_mask(w, SEQ_LEN, BATCH_SIZE, NUM_HEADS).to(device)
-    print(mask.size())
+    start_idx = lambda i: i - window // 2 - dilation * (window // 2)
+    end_idx = lambda i: i + window // 2 + 1 + dilation * (window // 2)
+    indicies = lambda i: torch.arange(start_idx(i), end_idx(i), dilation + 1)
+    indx = lambda i: indicies(i)[(indicies(i) >= 0) & (indicies(i) < SEQ_LEN)]
+    
+    mask = torch.zeros(SEQ_LEN, SEQ_LEN, dtype=torch.uint8)
+    for i in range(SEQ_LEN):
+        mask[i, indx(i)] = 1
+    
+    print(mask)
+        
+    
