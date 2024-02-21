@@ -116,9 +116,9 @@ def naive_diagonaled_matmul(x: torch.Tensor,
     return result
 
 def diagonaled_matmul(x: torch.Tensor,
-                         y: torch.Tensor,
-                         mask: torch.Tensor,
-                         ) -> torch.Tensor:
+                      y: torch.Tensor,
+                      mask: torch.Tensor,
+                      ) -> torch.Tensor:
     """
     Compute diagonaled masked matrix multiplication to compute windowed self attention
     for longformer.
@@ -130,14 +130,14 @@ def diagonaled_matmul(x: torch.Tensor,
     # Returns:
         torch.Tensor
     """
-    result = torch.matmul(x, y.transpose(-2, -1)) * mask
+    result = torch.bmm(x, y.transpose(-2, -1)) * mask
     return result
 
-def compute_mask(window: int,
+def compute_batch_mask(window: int,
                  sequence_length: int,
                  batch_size: int,
                  num_heads: int,
-                 dilation: int = None,
+                 dilation: int = 1,
                  ) -> torch.Tensor:
     """
     Compute mask for longformer attention.
@@ -155,7 +155,7 @@ def compute_mask(window: int,
     
     assert window % 2 == 1
     
-    if dilation is None:
+    if dilation == 1:
         mask =  (torch.ones(sequence_length, sequence_length, dtype=torch.uint8) - \
                (torch.tril(torch.ones(sequence_length, sequence_length, dtype=torch.uint8), diagonal= -window//2) + \
                 torch.triu(torch.ones(sequence_length, sequence_length, dtype=torch.uint8), diagonal= window//2+1)))
@@ -163,7 +163,7 @@ def compute_mask(window: int,
         # separate the dilated case because is slower to compute
         start_idx = lambda i: i - window // 2 - dilation * (window // 2)
         end_idx = lambda i: i + window // 2 + 1 + dilation * (window // 2)
-        indicies = lambda i: torch.arange(start_idx(i), end_idx(i), dilation + 1)
+        indicies = lambda i: torch.arange(start_idx(i), end_idx(i), dilation)
         indx = lambda i: indicies(i)[(indicies(i) >= 0) & (indicies(i) < sequence_length)]
         mask = torch.zeros(sequence_length, sequence_length, dtype=torch.uint8)
         
@@ -171,7 +171,28 @@ def compute_mask(window: int,
             mask[i, indx(i)] = 1
         
     return mask.unsqueeze(0).unsqueeze(0).repeat(batch_size, num_heads, 1, 1)
-                 
+             
+def compute_mask(window: int,
+                 sequence_length: int,
+                 dilation: int = 0,
+                 ) -> torch.Tensor:
+    """
+    Compute mask for longformer attention.
+    
+    # Arguments:
+        window: window size, number of tokens on each side
+        sequence_length: length of the sequence
+        
+    # Returns:
+        torch.Tensor: mask tensor of shape (sequence_length, sequence_length)
+    """
+    
+    assert window % 2 == 1
+    
+    mask =  (torch.ones(sequence_length, sequence_length, dtype=torch.uint8) - \
+           (torch.tril(torch.ones(sequence_length, sequence_length, dtype=torch.uint8), diagonal= -window//2) + \
+            torch.triu(torch.ones(sequence_length, sequence_length, dtype=torch.uint8), diagonal= window//2+1)))
+    return mask    
 
 if __name__ == "__main__":
     
@@ -183,21 +204,31 @@ if __name__ == "__main__":
     NUM_HEADS = 8
     D_MODEL = 512
     window = 5
-    dilation = 1
+    dilation = 0
     a = torch.randn(BATCH_SIZE, NUM_HEADS, SEQ_LEN, D_MODEL).to(device)
     b = torch.randn(BATCH_SIZE, NUM_HEADS, SEQ_LEN, D_MODEL).to(device)
 
     tries = 10
     
-    start_idx = lambda i: i - window // 2 - dilation * (window // 2)
-    end_idx = lambda i: i + window // 2 + 1 + dilation * (window // 2)
-    indicies = lambda i: torch.arange(start_idx(i), end_idx(i), dilation + 1)
-    indx = lambda i: indicies(i)[(indicies(i) >= 0) & (indicies(i) < SEQ_LEN)]
+    mask1 = compute_batch_mask(window, SEQ_LEN, BATCH_SIZE, NUM_HEADS).to(device)
+    mask2 = compute_batch_mask(window, SEQ_LEN, BATCH_SIZE, NUM_HEADS, dilation=dilation).to(device)
     
-    mask = torch.zeros(SEQ_LEN, SEQ_LEN, dtype=torch.uint8)
-    for i in range(SEQ_LEN):
-        mask[i, indx(i)] = 1
+    for i in range(tries):
+        start = time.time()
+        c1 = diagonaled_matmul(a, b, mask1)
+        end = time.time()
+        print("dilation = None: ", end - start)
+        
+    for i in range(tries):
+        start = time.time()
+        c2 = diagonaled_matmul(a, b, mask2)
+        end = time.time()
+        print("dilation = 1: ", end - start)
     
-    print(mask)
+    for i in range(tries):
+        start = time.time()
+        c3 = torch.matmul(a, b.transpose(-2, -1))
+        end = time.time()
+        print("matmul: ", end - start)
         
     
