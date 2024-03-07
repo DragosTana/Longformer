@@ -1,0 +1,3 @@
+# Longformer: the long-document Transformer
+
+Despite the name, this aims to be yet another PyTorch implementation of a [Transformer](https://arxiv.org/abs/1706.03762) architecture. However, the focus is on implementing and reproducing at least some of the experiments from the paper [Longformer: The Long-Document Transformer](https://arxiv.org/abs/2004.05150). Implementation of [BERT](https://arxiv.org/abs/1810.04805) and [RoBERTa](https://arxiv.org/abs/1907.11692) models was a necessary intermediate step.

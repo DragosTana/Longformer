@@ -9,12 +9,12 @@ import torch.nn as nn
 import torch.nn.functional as F
 from typing import List, Union
 
-from model.layers import PositionalEncoding, EncoderLayer
+from model.layers import PositionalEncoding, DecoderLayer
 
-class Encoder(nn.Module):
+class Decoder(nn.Module):
     """
-    Encoder implementation of the transformer architecture. 
-    The encoder consists of a stack of N identical layers.
+    Decoder implementation of the transformer architecture. 
+    The decoder consists of a stack of N identical layers.
     
     ### Args:
         - config: the configuration object for the transformer model
@@ -25,14 +25,15 @@ class Encoder(nn.Module):
         self.positional_encoding = PositionalEncoding(config)
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
         
-        self.layers = nn.ModuleList([EncoderLayer(config) for _ in range(config.num_hidden_layers)])
+        self.layers = nn.ModuleList([DecoderLayer(config) for _ in range(config.num_hidden_layers)])
         
-    def forward(self, input_tokens, attention_mask=None):
+    def forward(self, input_tokens, encoder_hidden_states, attention_mask=None):
         """
-        Forward pass of the encoder.
+        Forward pass of the decoder.
         
         ### Args:
             - input_tokens: the input tensor of shape (batch_size, sequence_length)
+            - encoder_hidden_states: the hidden states of the encoder of shape (batch_size, sequence_length, model_dim)
             - attention_mask: the attention mask tensor of shape (batch_size, sequence_length)
         """
         x = self.embeddings(input_tokens)
@@ -40,6 +41,6 @@ class Encoder(nn.Module):
         x = self.dropout(x)
         
         for layer in self.layers:
-            x = layer(x)
+            x = layer(x, encoder_hidden_states)
             
         return x

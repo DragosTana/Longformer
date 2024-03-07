@@ -23,6 +23,12 @@ class PositionWiseFeedForward(nn.Module):
         self.fc1 = nn.Linear(config.model_dim, config.ffn_dim)
         self.fc2 = nn.Linear(config.ffn_dim, config.model_dim)  
         self.dropout = nn.Dropout(config.hidden_dropout_prob)      
+        if config.activation == "relu":
+            self.activation = torch.relu
+        elif config.activation == "gelu":
+            self.activation = torch.nn.functional.gelu
+        else:
+            raise ValueError("Activation function not supported")
         
     def forward(self, x):
         """
@@ -34,7 +40,7 @@ class PositionWiseFeedForward(nn.Module):
             a float tensor with shape [batch_size, sequence_length, model_dim]
         """
         x = self.fc1(x)
-        x = torch.relu(x)
+        x = self.activation(x)
         x = self.dropout(x)
         x = self.fc2(x)
         return x
