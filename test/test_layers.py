@@ -8,32 +8,27 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(os.path.dirname(SCRIPT_DIR))
 
 from model.layers import PositionWiseFeedForward, MultiHeadAttention, EncoderLayer, DecoderLayer, PositionalEncoding
+from model.config import TransformerConfig
 
 class TestPositionWiseFeedForward(unittest.TestCase):
     def test_output_size(self):
-        class Config:
-            model_dim = 512
-            ffn_dim = 2048
-            hidden_dropout_prob = 0.1
+       
+        config = TransformerConfig()
+        model = PositionWiseFeedForward(config)
 
-        model = PositionWiseFeedForward(Config)
-
-        input_tensor = torch.randn(32, 128, 512)
+        input_tensor = torch.randn(32, 128, 768)
         output_tensor = model(input_tensor)
         self.assertEqual(output_tensor.size(), input_tensor.size())
         
 class TestMultiHeadAttention(unittest.TestCase):
     def test_output_size(self):
-        class Config:
-            model_dim = 512
-            num_attention_heads = 8
-            attention_probs_dropout_prob = 0.1
+        
+        config = TransformerConfig()
+        model = MultiHeadAttention(config)
 
-        model = MultiHeadAttention(Config)
-
-        input_query = torch.randn(32, 128, 512)
-        input_key = torch.randn(32, 128, 512)
-        input_value = torch.randn(32, 128, 512)
+        input_query = torch.randn(32, 128, 768)
+        input_key = torch.randn(32, 128, 768)
+        input_value = torch.randn(32, 128, 768)
         output_tensor = model(input_query, input_key, input_value)
         self.assertEqual(output_tensor.size(), input_query.size())
         self.assertEqual(output_tensor.size(), input_key.size())
@@ -50,49 +45,31 @@ class TestMultiHeadAttention(unittest.TestCase):
                   
 class TestEncoder(unittest.TestCase):
     def test_output_size(self):
-        class Config:
-            model_dim = 512
-            num_attention_heads = 8
-            attention_probs_dropout_prob = 0.1
-            ffn_dim = 2048
-            hidden_dropout_prob = 0.1
-            layer_norm_eps = 1e-5
-            
-        model = EncoderLayer(Config)
+        config = TransformerConfig()
+        model = EncoderLayer(config)
 
-        input_tensor = torch.randn(32, 128, 512)
+        input_tensor = torch.randn(32, 128, 768)
         output_tensor = model(input_tensor)
         self.assertEqual(output_tensor.size(), input_tensor.size())
     
 class TestDecoder(unittest.TestCase):
     def test_output_size(self):
-        class Config:
-            model_dim = 512
-            num_attention_heads = 8
-            attention_probs_dropout_prob = 0.1
-            ffn_dim = 2048
-            hidden_dropout_prob = 0.1
-            
+        config = TransformerConfig()
+        model = DecoderLayer(config)
 
-        model = DecoderLayer(Config)
-
-        hidden_states = torch.randn(32, 128, 512)
-        encoder_hidden_states = torch.randn(32, 128, 512)
+        hidden_states = torch.randn(32, 128, 768)
+        encoder_hidden_states = torch.randn(32, 128, 768)
         output_tensor = model(hidden_states, encoder_hidden_states)
         self.assertEqual(output_tensor.size(), hidden_states.size())
         
 class TestPositionalEmbedding(unittest.TestCase):
     def test_output_size(self):
-        class Config:
-            max_position_embeddings = 256
-            model_dim = 512
+        config = TransformerConfig()
+        model = PositionalEncoding(config)
 
-        model = PositionalEncoding(Config)
-
-        input_tensor = torch.randn(32, 128, 512)
+        input_tensor = torch.randn(32, 128, 768)
         output_tensor = model(input_tensor)
         self.assertEqual(output_tensor.size(), input_tensor.size())
         
-
 if __name__ == '__main__':
     unittest.main()

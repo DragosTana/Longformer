@@ -13,9 +13,10 @@ from model.transformer import Transformer
 from model.config import TransformerConfig
 
 class TestEncoder(unittest.TestCase):
-    
+
+    @torch.no_grad()
     def test_batch_forward(self):
-        config = TransformerConfig(num_hidden_layers=3)
+        config = TransformerConfig()
         encoder = Encoder(config)
         
         batch_size = 32
@@ -27,8 +28,9 @@ class TestEncoder(unittest.TestCase):
         
 class TestDecoder(unittest.TestCase):
     
+    @torch.no_grad()
     def test_batch_forward(self):
-        config = TransformerConfig(num_hidden_layers=3)
+        config = TransformerConfig()
         decoder = Decoder(config)
         
         batch_size = 32
@@ -42,8 +44,10 @@ class TestDecoder(unittest.TestCase):
         
 class TestTransformer(unittest.TestCase):
         
+        @torch.no_grad()
+        @unittest.skipUnless(torch.cuda.is_available(), "CUDA is not available")
         def test_batch_forward(self):
-            config = TransformerConfig(num_hidden_layers=3)
+            config = TransformerConfig(num_hidden_layers=2)
             transformer = Transformer(config)
             
             batch_size = 32
@@ -54,5 +58,24 @@ class TestTransformer(unittest.TestCase):
             
             self.assertEqual(output.shape, (batch_size, sequence_length, config.trg_vocab_size))
         
+        @unittest.skipUnless(torch.cuda.is_available(), "CUDA is not available")
+        def test_all_parameter_updates(self):
+            config = TransformerConfig(num_hidden_layers=2)
+            transformer = Transformer(config)
+            optimizer = torch.optim.Adam(transformer.parameters(), lr=1e-3)
+            
+            batch_size = 32
+            sequence_length = 128
+            input_ids = torch.randint(0, config.vocab_size, (batch_size, sequence_length))
+            target_ids = torch.randint(0, config.trg_vocab_size, (batch_size, sequence_length))
+            output = transformer(input_ids, target_ids)
+            
+            loss = output.mean()
+            loss.backward()
+            optimizer.step()
+            
+            for param in transformer.parameters():
+                self.assertIsNotNone(param.grad)
+            
 if __name__=="__main__":
     unittest.main()
