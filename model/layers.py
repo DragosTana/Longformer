@@ -188,7 +188,7 @@ class DecoderLayer(nn.Module):
         
 class PositionalEncoding(nn.Module):
     """
-    Class implementing the positional embedding layer. 
+    Class implementing the positional encoding layer. 
     This is a simple implementation of the sinusoidal positional encoding from the "Attention is All You Need" paper.
     
     """
@@ -221,5 +221,44 @@ class PositionalEncoding(nn.Module):
         
         return x + self.encoding[:x.size(1), :].unsqueeze(0)
         
+        
+#TODO: TEST THIS     
 class SegmentEmbedding(nn.Embedding):
-    ""
+    """
+    Class implementeing segment embeddings for BERT model.
+    """
+    def __init__(self, config):
+        super().__init__()
+        self.segment_embedding = nn.Embedding(2, config.model_dim)
+        
+    def forward(self, segments):
+        """
+        ### Args:
+            - segments: a long tensor with shape [batch_size, sequence_length]
+        ### Outputs:
+            - a float tensor with shape [batch_size, sequence_length, model_dim]
+        """
+        return self.segment_embedding(segments)
+
+#TODO: TEST THIS
+class PositionEmbedding(nn.Module):
+    """
+    Class implementing the positional embedding layer. This is different from the PositionalEncoding layer
+    since the embeddings are learned instead of being fixed like in the original transformer model.
+    This is the implementation of the BERT model.
+    """
+    def __init__(self, config):
+        super().__init__()
+        self.position_embedding = nn.Embedding(config.max_position_embeddings, config.model_dim)
+        positions = torch.arange(0, config.max_position_embeddings).unsqueeze(1)
+        self.register_buffer('positions', positions)
+    
+    def forward(self, x):
+        """
+        ### Args:
+            - x: a float tensor with shape [batch_size, sequence_length, model_dim]
+        ### Outputs:
+            - a float tensor with shape [batch_size, sequence_length, model_dim]
+        """
+        positions = self.positions[:x.size(1), :].expand(x.size(0), -1)
+        return x + self.position_embedding(positions)
