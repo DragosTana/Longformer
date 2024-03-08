@@ -221,5 +221,5 @@ class PositionalEncoding(nn.Module):
         
         return x + self.encoding[:x.size(1), :].unsqueeze(0)
         
-
-        
+class SegmentEmbedding(nn.Embedding):
+    ""
