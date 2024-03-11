@@ -6,6 +6,7 @@
 
 import torch
 from torch import nn
+from model.activations import get_activation
 
 class PositionWiseFeedForward(nn.Module):
     """
@@ -23,12 +24,7 @@ class PositionWiseFeedForward(nn.Module):
         self.fc1 = nn.Linear(config.model_dim, config.ffn_dim)
         self.fc2 = nn.Linear(config.ffn_dim, config.model_dim)  
         self.dropout = nn.Dropout(config.hidden_dropout_prob)      
-        if config.activation == "relu":
-            self.activation = torch.relu
-        elif config.activation == "gelu":
-            self.activation = torch.nn.functional.gelu
-        else:
-            raise ValueError("Activation function not supported")
+        self.activation = get_activation(config.activation)
         
     def forward(self, x):
         """
