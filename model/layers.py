@@ -258,3 +258,7 @@ class PositionEmbedding(nn.Module):
         """
         positions = self.positions[:x.size(1), :].expand(x.size(0), -1)
         return x + self.position_embedding(positions)
+    
+class LongformerAttention(nn.Module):
+    def __init__(self, config):
+        super().__init__():
