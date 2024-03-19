@@ -7,10 +7,8 @@ import sys
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(os.path.dirname(SCRIPT_DIR))
 
-from model.encoders import Encoder
-from model.decoders import Decoder
-from model.transformer import Transformer
 from model.config import TransformerConfig
+from model.longformer import LongformerEmbeddings, LongformerLMHead, LongformerSelfAttention
 
 class TestEncoder(unittest.TestCase):
 
@@ -76,6 +74,7 @@ class TestTransformer(unittest.TestCase):
             
             for param in transformer.parameters():
                 self.assertIsNotNone(param.grad)
-            
-if __name__=="__main__":
-    unittest.main()
+              
+
+
+

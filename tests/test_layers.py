@@ -7,7 +7,7 @@ import sys
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(os.path.dirname(SCRIPT_DIR))
 
-from model.layers import PositionWiseFeedForward, MultiHeadAttention, EncoderLayer, DecoderLayer, PositionalEncoding
+from model.layers import PositionWiseFeedForward, MultiHeadAttention, EncoderLayer, DecoderLayer, SinusoidalPositionalEmbedding, LearnedPositionalEmbedding
 from model.config import TransformerConfig
 
 class TestPositionWiseFeedForward(unittest.TestCase):
@@ -65,7 +65,16 @@ class TestDecoder(unittest.TestCase):
 class TestPositionalEmbedding(unittest.TestCase):
     def test_output_size(self):
         config = TransformerConfig()
-        model = PositionalEncoding(config)
+        model = SinusoidalPositionalEmbedding(config)
+
+        input_tensor = torch.randn(32, 128, 768)
+        output_tensor = model(input_tensor)
+        self.assertEqual(output_tensor.size(), input_tensor.size())
+        
+class TestLearnedPositionalEmbedding(unittest.TestCase):
+    def test_output_size(self):
+        config = TransformerConfig()
+        model = LearnedPositionalEmbedding(config)
 
         input_tensor = torch.randn(32, 128, 768)
         output_tensor = model(input_tensor)

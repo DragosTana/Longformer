@@ -10,6 +10,9 @@ import torch.nn.functional as F
 from typing import List, Union
 
 from model.layers import PositionalEncoding, EncoderLayer, SegmentEmbedding, PositionEmbedding
+from transformers import LongformerForMaskedLM
+
+
 
 class Encoder(nn.Module):
     """

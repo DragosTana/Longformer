@@ -182,11 +182,10 @@ class DecoderLayer(nn.Module):
         hidden_states = self.layer_norm3(hidden_states + _hidden_states)
         return hidden_states
         
-class PositionalEncoding(nn.Module):
+class SinusoidalPositionalEmbedding(nn.Module):
     """
     Class implementing the positional encoding layer. 
     This is a simple implementation of the sinusoidal positional encoding from the "Attention is All You Need" paper.
-    
     """
     def __init__(self, config):
         super().__init__()
@@ -200,65 +199,30 @@ class PositionalEncoding(nn.Module):
         self.encoding[:, 0::2] = torch.sin(pos / (10000 ** (_2i / config.model_dim)))
         self.encoding[:, 1::2] = torch.cos(pos / (10000 ** (_2i / config.model_dim)))
     
-    def forward(self, x):
-        """
-        Forward pass of the positional embedding layer.
-        
-        ### Args:
-            - x: a float tensor with shape [batch_size, sequence_length, model_dim]
-        ### Outputs:
-            - a float tensor with shape [batch_size, sequence_length, model_dim]
-        """
-        
+    def forward(self, x):       
         if x.size(1) > self.encoding.size(0):
             raise ValueError("Input sequence length is greater than the maximum position embedding length")
         if x.size(2) != self.encoding.size(1):
             raise ValueError("Input sequence dimension is different from the position embedding dimension")
         
         return x + self.encoding[:x.size(1), :].unsqueeze(0)
-        
-        
-#TODO: TEST THIS     
-class SegmentEmbedding(nn.Embedding):
-    """
-    Class implementeing segment embeddings for BERT model.
-    """
-    def __init__(self, config):
-        super().__init__()
-        self.segment_embedding = nn.Embedding(2, config.model_dim)
-        
-    def forward(self, segments):
-        """
-        ### Args:
-            - segments: a long tensor with shape [batch_size, sequence_length]
-        ### Outputs:
-            - a float tensor with shape [batch_size, sequence_length, model_dim]
-        """
-        return self.segment_embedding(segments)
 
-#TODO: TEST THIS
-class PositionEmbedding(nn.Module):
+class LearnedPositionalEmbedding(nn.Module):
     """
-    Class implementing the positional embedding layer. This is different from the PositionalEncoding layer
-    since the embeddings are learned instead of being fixed like in the original transformer model.
-    This is the implementation of the BERT model.
+    This module produces LearnedPositionalEmbedding.
     """
     def __init__(self, config):
-        super().__init__()
-        self.position_embedding = nn.Embedding(config.max_position_embeddings, config.model_dim)
-        positions = torch.arange(0, config.max_position_embeddings).unsqueeze(1)
-        self.register_buffer('positions', positions)
+        super(LearnedPositionalEmbedding, self).__init__()
+        self.weights = nn.Embedding(config.max_position_embeddings, config.model_dim)
+        self.reset_parameters()
     
-    def forward(self, x):
-        """
-        ### Args:
-            - x: a float tensor with shape [batch_size, sequence_length, model_dim]
-        ### Outputs:
-            - a float tensor with shape [batch_size, sequence_length, model_dim]
-        """
-        positions = self.positions[:x.size(1), :].expand(x.size(0), -1)
-        return x + self.position_embedding(positions)
-    
-class LongformerAttention(nn.Module):
-    def __init__(self, config):
-        super().__init__():
+    def reset_parameters(self):
+        nn.init.normal_(self.weights.weight, std=0.02)
+
+    def forward(self, input, offset=0):
+        """Input is expected to be of size [seq_len x bsz]."""
+        seq_len, bsz = input.size()
+        positions = (offset + torch.arange(seq_len)).cuda(self.device)
+        res = self.weights(positions).unsqueeze(1).expand(-1, bsz, -1)
+        
+        
