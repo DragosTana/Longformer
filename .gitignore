@@ -1,3 +1,6 @@
 data/
 wandb/
+runs/
+__pycache__/
+model/__pycache__/
 ```

@@ -5,3 +5,4 @@ torch
 torchtext
 transformers
 tqdm
+wandb

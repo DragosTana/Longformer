@@ -108,6 +108,72 @@ class TestLongformerForMaskedLM(unittest.TestCase):
         output_tensor = model(input_ids)
         self.assertEqual(output_tensor.size(), (batch_size, sequence_length, config.vocab_size))
         
+    @torch.no_grad()
+    @unittest.skipUnless(torch.cuda.is_available(), "CUDA is not available")    
+    def test_forwad_cuda(self):
+        device = torch.device("cuda")   
+        config = TransformerConfig(num_hidden_layers=2)
+        model = LongformerForMaskedLM(config)
+        model.to(device)
+        batch_size = 32
+        sequence_length = 128
+        input_ids = torch.randint(0, config.vocab_size, (batch_size, sequence_length)).to(device)
+        output_tensor = model(input_ids)
+        self.assertEqual(output_tensor.size(), (batch_size, sequence_length, config.vocab_size))
+        
+        
+    @unittest.skipUnless(torch.cuda.is_available(), "CUDA is not available")
+    def test_all_parameter_updates(self):
+        
+        device = torch.device("cuda")
+        batch_size = 32
+        sequence_length = 128
+        
+        config = TransformerConfig(num_hidden_layers=2)
+        model = LongformerForMaskedLM(config)
+        model.to(device)
+        
+        optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+        input_ids = torch.randint(0, config.vocab_size, (batch_size, sequence_length)).to(device)
+        output = model(input_ids)
+        loss = output.mean()
+        loss.backward()
+        optimizer.step()
+        
+        for param in model.parameters():
+            self.assertTrue(param.grad is not None)
+           
+    @unittest.skipUnless(torch.cuda.is_available(), "CUDA is not available")        
+    def test_loss(self):
+        config = TransformerConfig(num_hidden_layers=2)
+        model = LongformerForMaskedLM(config)
+        
+        batch_size = 32
+        sequence_length = 128
+        input_ids = torch.randint(0, config.vocab_size, (batch_size, sequence_length))
+        labels = input_ids.clone()
+        labels[labels == config.pad_token_id] = -100
+        output = model(input_ids)
+        
+        self.assertEqual(output.size(), (batch_size, sequence_length, config.vocab_size))
+        
+        criterion = torch.nn.CrossEntropyLoss()
+        loss = criterion(output.view(-1, config.vocab_size), labels.view(-1))
+        self.assertTrue(loss.item() >= 0)
+    
+    def test_mask(self):
+        config = TransformerConfig(num_hidden_layers=2)
+        model = LongformerForMaskedLM(config)
+        
+        batch_size = 32
+        sequence_length = 128
+        input_ids = torch.randint(0, config.vocab_size, (batch_size, sequence_length))
+        mask = torch.randint(0, 2, (batch_size, sequence_length))
+        output_with_mask = model(input_ids, mask)
+        output_wo_mask = model(input_ids)
+        self.assertFalse(torch.allclose(output_with_mask, output_wo_mask, atol=1e-6))
+        
 if __name__ == "__main__":
+    runner = unittest.TextTestRunner(verbosity=2)
     unittest.main()
 

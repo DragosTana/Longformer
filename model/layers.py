@@ -6,7 +6,11 @@
 
 import torch
 from torch import nn
-from model.activations import get_activation
+
+try:
+    from .activations import get_activation
+except ImportError:
+    from activations import get_activation
 
 class PositionWiseFeedForward(nn.Module):
     """
@@ -40,7 +44,7 @@ class PositionWiseFeedForward(nn.Module):
         x = self.dropout(x)
         x = self.fc2(x)
         return x
-    
+
 class MultiHeadAttention(nn.Module):
     """
     Vanilla multi-head attention layer. Straightforward from the "Attention is All You Need" paper.
@@ -74,7 +78,7 @@ class MultiHeadAttention(nn.Module):
         x = x.view(*new_x_shape)
         return x.permute(0, 2, 1, 3)
     
-    def forward(self, query, key, value):
+    def forward(self, query, key, value, mask=None):
         """
         Forward pass of the multi-head attention layer.
         
@@ -82,20 +86,24 @@ class MultiHeadAttention(nn.Module):
             - query: a float tensor with shape [batch_size, sequence_length, model_dim]
             - key: a float tensor with shape [batch_size, sequence_length, model_dim]
             - value: a float tensor with shape [batch_size, sequence_length, model_dim]
+            - mask (optional): a float tensor with shape [batch_size, 1, 1, sequence_length]
         ### Outputs:
             - a float tensor with shape [batch_size, sequence_length, model_dim]
         """
-        query = self.query(query)
+
+        query = self.query(query) #[batch_size, sequence_length, model_dim]
         key = self.key(key)
         value = self.value(value)
         
-        query = self.transpose_for_scores(query)
+        query = self.transpose_for_scores(query) #[batch_size, num_attention_heads, sequence_length, attention_head_size]
         key = self.transpose_for_scores(key)
         value = self.transpose_for_scores(value)
-        
+
         attention_scores = torch.matmul(query, key.transpose(-1, -2))
         attention_scores = attention_scores / (self.attention_head_size ** 0.5)
+        attention_scores + mask if mask is not None else attention_scores #ternary operator cool stuff horrible readibility
         attention_probs = torch.nn.functional.softmax(attention_scores, dim=-1)
+
         attention_probs = self.dropout(attention_probs)
         
         context_layer = torch.matmul(attention_probs, value)
@@ -103,6 +111,7 @@ class MultiHeadAttention(nn.Module):
         new_context_layer_shape = context_layer.size()[:-2] + (self.model_dim,)
         context_layer = context_layer.view(*new_context_layer_shape)
         return context_layer
+
     
 class EncoderLayer(nn.Module):
     """
@@ -224,5 +233,4 @@ class LearnedPositionalEmbedding(nn.Module):
         seq_len, bsz = input.size()
         positions = (offset + torch.arange(seq_len)).cuda(self.device)
         res = self.weights(positions).unsqueeze(1).expand(-1, bsz, -1)
-        
         
