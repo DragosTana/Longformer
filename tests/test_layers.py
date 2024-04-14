@@ -7,7 +7,7 @@ import sys
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(os.path.dirname(SCRIPT_DIR))
 
-from model.layers import PositionWiseFeedForward, MultiHeadAttention, EncoderLayer, DecoderLayer, SinusoidalPositionalEmbedding, LearnedPositionalEmbedding
+from model.layers import PositionWiseFeedForward, MultiHeadAttention, EncoderLayer, DecoderLayer, SinusoidalPositionalEmbedding
 from model.config import TransformerConfig
 
 class TestPositionWiseFeedForward(unittest.TestCase):
@@ -15,9 +15,9 @@ class TestPositionWiseFeedForward(unittest.TestCase):
        
         config = TransformerConfig()
         model = PositionWiseFeedForward(config)
-
+        attention_mask = torch.randn(32, 128)
         input_tensor = torch.randn(32, 128, 768)
-        output_tensor = model(input_tensor)
+        output_tensor = model(input_tensor, attention_mask)
         self.assertEqual(output_tensor.size(), input_tensor.size())
         
 class TestMultiHeadAttention(unittest.TestCase):

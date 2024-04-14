@@ -3,4 +3,5 @@ wandb/
 runs/
 __pycache__/
 model/__pycache__/
+model/weights/
 ```

@@ -9,9 +9,11 @@ from torch import nn
 
 try:
     from .activations import get_activation
+    from .config import Config
 except ImportError:
     from activations import get_activation
-
+    from config import Config
+    
 class PositionWiseFeedForward(nn.Module):
     """
     Position-wise feed-forward layer. Straightforward from the "Attention is All You Need" paper
@@ -19,30 +21,30 @@ class PositionWiseFeedForward(nn.Module):
     
     ### Args:
         config: a configuration object with the following attributes:
-            model_dim: the input and output dimension of the layer (default 512)
+            dim: the input and output dimension of the layer (default 512)
             ffn_dim: the dimension of the intermediate layer (default 2048)
             hidden_dropout_prob: the dropout probability (default 0.1)
     """
-    def __init__(self, config):
+    def __init__(self, config: Config):
         super().__init__()
-        self.fc1 = nn.Linear(config.model_dim, config.ffn_dim)
-        self.fc2 = nn.Linear(config.ffn_dim, config.model_dim)  
-        self.dropout = nn.Dropout(config.hidden_dropout_prob)      
+        self.dropout = nn.Dropout(p=config.dropout)
+        self.lin1 = nn.Linear(in_features=config.dim, out_features=config.hidden_dim)
+        self.lin2 = nn.Linear(in_features=config.hidden_dim, out_features=config.dim)
         self.activation = get_activation(config.activation)
-        
-    def forward(self, x):
+
+    def forward(self, input: torch.Tensor) -> torch.Tensor:
         """
         Forward pass of the feed-forward layer.
         
         ### Args:
-            x: a float tensor with shape [batch_size, sequence_length, model_dim]
+            x: a float tensor with shape [batch_size, sequence_length, dim]
         ### Outputs:
-            a float tensor with shape [batch_size, sequence_length, model_dim]
+            a float tensor with shape [batch_size, sequence_length, dim]
         """
-        x = self.fc1(x)
+        x = self.lin1(input)
         x = self.activation(x)
+        x = self.lin2(x)
         x = self.dropout(x)
-        x = self.fc2(x)
         return x
 
 class MultiHeadAttention(nn.Module):
@@ -51,27 +53,27 @@ class MultiHeadAttention(nn.Module):
     
     ### Args:
         config: a configuration object with the following attributes:
-            model_dim: the input and output dimension of the layer (default 512)
+            dim: the input and output dimension of the layer (default 512)
             num_attention_heads: the number of attention heads (default 8)
             attention_probs_dropout_prob: the dropout probability (default 0.1)
     """
-    def __init__(self, config):
+    def __init__(self, config: Config):
         super().__init__()
         self.num_attention_heads = config.num_attention_heads
-        self.attention_head_size = int(config.model_dim / config.num_attention_heads)
-        self.model_dim = self.num_attention_heads * self.attention_head_size
+        self.attention_head_size = int(config.dim / config.num_attention_heads)
+        self.dim = self.num_attention_heads * self.attention_head_size
 
-        if config.model_dim % config.num_attention_heads != 0:
+        if config.dim % config.num_attention_heads != 0:
             raise ValueError(
                 "The hidden size (%d) is not a multiple of the number of attention "
-                "heads (%d)" % (config.model_dim, config.num_attention_heads)
+                "heads (%d)" % (config.dim, config.num_attention_heads)
             )
         
-        self.query = nn.Linear(config.model_dim, self.model_dim)
-        self.key = nn.Linear(config.model_dim, self.model_dim)
-        self.value = nn.Linear(config.model_dim, self.model_dim)
+        self.q_lin = nn.Linear(config.dim, self.dim)
+        self.k_lin = nn.Linear(config.dim, self.dim)
+        self.v_lin = nn.Linear(config.dim, self.dim)
 
-        self.dropout = nn.Dropout(config.attention_probs_dropout_prob)
+        self.dropout = nn.Dropout(config.attention_dropout)
         
     def transpose_for_scores(self, x):
         new_x_shape = x.size()[:-1] + (self.num_attention_heads, self.attention_head_size)
@@ -83,17 +85,17 @@ class MultiHeadAttention(nn.Module):
         Forward pass of the multi-head attention layer.
         
         ### Args:
-            - query: a float tensor with shape [batch_size, sequence_length, model_dim]
-            - key: a float tensor with shape [batch_size, sequence_length, model_dim]
-            - value: a float tensor with shape [batch_size, sequence_length, model_dim]
+            - query: a float tensor with shape [batch_size, sequence_length, dim]
+            - key: a float tensor with shape [batch_size, sequence_length, dim]
+            - value: a float tensor with shape [batch_size, sequence_length, dim]
             - mask (optional): a float tensor with shape [batch_size, 1, 1, sequence_length]
         ### Outputs:
-            - a float tensor with shape [batch_size, sequence_length, model_dim]
+            - a float tensor with shape [batch_size, sequence_length, dim]
         """
 
-        query = self.query(query) #[batch_size, sequence_length, model_dim]
-        key = self.key(key)
-        value = self.value(value)
+        query = self.q_lin(query) #[batch_size, sequence_length, dim]
+        key = self.k_lin(key)
+        value = self.v_lin(value)
         
         query = self.transpose_for_scores(query) #[batch_size, num_attention_heads, sequence_length, attention_head_size]
         key = self.transpose_for_scores(key)
@@ -101,31 +103,43 @@ class MultiHeadAttention(nn.Module):
 
         attention_scores = torch.matmul(query, key.transpose(-1, -2))
         attention_scores = attention_scores / (self.attention_head_size ** 0.5)
-        attention_scores + mask if mask is not None else attention_scores #ternary operator cool stuff horrible readibility
+        attention_scores = attention_scores + mask if mask is not None else attention_scores
         attention_probs = torch.nn.functional.softmax(attention_scores, dim=-1)
 
         attention_probs = self.dropout(attention_probs)
         
         context_layer = torch.matmul(attention_probs, value)
         context_layer = context_layer.permute(0, 2, 1, 3).contiguous()
-        new_context_layer_shape = context_layer.size()[:-2] + (self.model_dim,)
+        new_context_layer_shape = context_layer.size()[:-2] + (self.dim,)
         context_layer = context_layer.view(*new_context_layer_shape)
         return context_layer
-
     
+class MultiHeadSelfAttention(MultiHeadAttention):
+    """
+    Multi-head self-attention layer for distilBERT. Adds only an additional linear layer for the output.
+    """
+    def __init__(self, config):
+        super().__init__(config)
+        self.out_lin = nn.Linear(in_features=config.dim, out_features=config.dim)
+    
+    def forward(self, query, key, value, mask=None):
+        x = super().forward(query, key, value, mask)
+        x = self.out_lin(x)
+        return x
+
 class EncoderLayer(nn.Module):
     """
     Encoder layer of the transformer. Copied from the "Attention is All You Need" paper.
     
     ### Args:
-        - config: a configuration object `TransformerConfig`
+        - config: a configuration object `Config`
     """
-    def __init__(self, config):
+    def __init__(self, config: Config):
         super().__init__()
         self.self_attention = MultiHeadAttention(config)
         self.feed_forward = PositionWiseFeedForward(config)
-        self.layer_norm1 = nn.LayerNorm(config.model_dim)
-        self.layer_norm2 = nn.LayerNorm(config.model_dim, config.layer_norm_eps)
+        self.layer_norm1 = nn.LayerNorm(config.dim)
+        self.layer_norm2 = nn.LayerNorm(config.dim, 1e-12)
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
         
     def forward(self, hidden_states):
@@ -133,9 +147,9 @@ class EncoderLayer(nn.Module):
         Feed-forward pass of the encoder layer.
         
         ### Args:
-            - hidden_states: a float tensor with shape [batch_size, sequence_length, model_dim]
+            - hidden_states: a float tensor with shape [batch_size, sequence_length, dim]
         ### Outputs:
-            - a float tensor with shape [batch_size, sequence_length, model_dim]
+            - a float tensor with shape [batch_size, sequence_length, dim]
         """
         # self-attention + layer norm
         _hidden_states = self.self_attention(hidden_states, hidden_states, hidden_states)
@@ -147,22 +161,22 @@ class EncoderLayer(nn.Module):
         _hidden_states = self.dropout(_hidden_states)
         hidden_states = self.layer_norm2(hidden_states + _hidden_states)
         return hidden_states
-    
+        
 class DecoderLayer(nn.Module):
     """
     Decoder layer of the transformer. Copied from the "Attention is All You Need" paper.
     
     ### Args:
-        - config: a configuration object `TransformerConfig` 
+        - config: a configuration object `Config` 
     """
     def __init__(self, config):
         super().__init__()
         self.self_attention = MultiHeadAttention(config)
-        self.layer_norm1 = nn.LayerNorm(config.model_dim)
+        self.layer_norm1 = nn.LayerNorm(config.dim)
         self.cross_attention = MultiHeadAttention(config)
-        self.layer_norm2 = nn.LayerNorm(config.model_dim)
+        self.layer_norm2 = nn.LayerNorm(config.dim)
         self.feed_forward = PositionWiseFeedForward(config)
-        self.layer_norm3 = nn.LayerNorm(config.model_dim)
+        self.layer_norm3 = nn.LayerNorm(config.dim)
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
         
     def forward(self, hidden_states, encoder_hidden_states):
@@ -170,8 +184,8 @@ class DecoderLayer(nn.Module):
         Feed-forward pass of the decoder layer.
         
         ### Args:
-            - hidden_states: a float tensor with shape [batch_size, sequence_length, model_dim]
-            - encoder_hidden_states (optional): a float tensor with shape [batch_size, sequence_length, model_dim].
+            - hidden_states: a float tensor with shape [batch_size, sequence_length, dim]
+            - encoder_hidden_states (optional): a float tensor with shape [batch_size, sequence_length, dim].
                 If provided, the decoder layer will perform cross-attention over the encoder_hidden_states.
         """
         
@@ -199,14 +213,14 @@ class SinusoidalPositionalEmbedding(nn.Module):
     def __init__(self, config):
         super().__init__()
         
-        self.encoding = torch.zeros(config.max_position_embeddings, config.model_dim)
+        self.encoding = torch.zeros(config.max_position_embeddings, config.dim)
         self.encoding.requires_grad = False
         
         pos = torch.arange(0, config.max_position_embeddings).unsqueeze(1)
-        _2i = torch.arange(0, config.model_dim, 2)
+        _2i = torch.arange(0, config.dim, 2)
         
-        self.encoding[:, 0::2] = torch.sin(pos / (10000 ** (_2i / config.model_dim)))
-        self.encoding[:, 1::2] = torch.cos(pos / (10000 ** (_2i / config.model_dim)))
+        self.encoding[:, 0::2] = torch.sin(pos / (10000 ** (_2i / config.dim)))
+        self.encoding[:, 1::2] = torch.cos(pos / (10000 ** (_2i / config.dim)))
     
     def forward(self, x):       
         if x.size(1) > self.encoding.size(0):
@@ -216,21 +230,40 @@ class SinusoidalPositionalEmbedding(nn.Module):
         
         return x + self.encoding[:x.size(1), :].unsqueeze(0)
 
-class LearnedPositionalEmbedding(nn.Module):
-    """
-    This module produces LearnedPositionalEmbedding.
-    """
-    def __init__(self, config):
-        super(LearnedPositionalEmbedding, self).__init__()
-        self.weights = nn.Embedding(config.max_position_embeddings, config.model_dim)
-        self.reset_parameters()
-    
-    def reset_parameters(self):
-        nn.init.normal_(self.weights.weight, std=0.02)
+class Embeddings(nn.Module):
+    def __init__(self, config: Config):
+        super().__init__()
+        self.word_embeddings = nn.Embedding(config.vocab_size, config.dim, padding_idx=config.pad_token_id)
+        self.position_embeddings = nn.Embedding(config.max_position_embeddings, config.dim) \
+                                   if not config.sinusoidal_pos_embds else SinusoidalPositionalEmbedding(config)
+        
+        self.LayerNorm = nn.LayerNorm(config.dim, eps=1e-12)
+        self.dropout = nn.Dropout(config.dropout)
+        self.register_buffer(
+            "position_ids", torch.arange(config.max_position_embeddings).expand((1, -1)), persistent=False
+        )
 
-    def forward(self, input, offset=0):
-        """Input is expected to be of size [seq_len x bsz]."""
-        seq_len, bsz = input.size()
-        positions = (offset + torch.arange(seq_len)).cuda(self.device)
-        res = self.weights(positions).unsqueeze(1).expand(-1, bsz, -1)
+    def forward(self, input_ids: torch.Tensor, ) -> torch.Tensor:
+        """
+        ### Args:
+            - input_ids (torch.Tensor): torch.tensor(bs, max_seq_length) The token ids to embed.
+        ### Outputs:
+            - torch.tensor(bs, max_seq_length, dim) The embedded tokens plus positional embeddings.
+        """
+
+        input_embeds = self.word_embeddings(input_ids)  # [bs, max_seq_length, dim]
+        seq_length = input_embeds.size(1)
+
+        if hasattr(self, "position_ids"):
+            position_ids = self.position_ids[:, :seq_length]
+        else:
+            position_ids = torch.arange(seq_length, dtype=torch.long, device=input_ids.device)  # (max_seq_length)
+            position_ids = position_ids.unsqueeze(0).expand_as(input_ids)  # (bs, max_seq_length)
+
+        position_embeddings = self.position_embeddings(position_ids)  # (bs, max_seq_length, dim)
+
+        embeddings = input_embeds + position_embeddings  # (bs, max_seq_length, dim)
+        embeddings = self.LayerNorm(embeddings)  # (bs, max_seq_length, dim)
+        embeddings = self.dropout(embeddings)  # (bs, max_seq_length, dim)
+        return embeddings
         

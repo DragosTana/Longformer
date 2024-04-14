@@ -89,6 +89,9 @@ tokenizer = AutoTokenizer.from_pretrained("roberta-base", use_fast=True, return_
 data_collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=True, mlm_probability=0.15, return_tensors="pt")
 dataloader = DataLoader(dataset, batch_size=4, collate_fn=data_collator, shuffle=True)
 
+print(dataset)
+
+
 batch = next(iter(dataloader))
 
 MODEL_PATH = "./runs/"
@@ -121,7 +124,7 @@ model = LongformerForMaskedLM(config)
 optimizer = torch.optim.AdamW(model.parameters(), lr=5e-5)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")  
 model.to(device)
-epochs = 500
+epochs = 50
 criterion = torch.nn.CrossEntropyLoss()
 model.train()
 for epoch in range(epochs):
@@ -136,12 +139,19 @@ for epoch in range(epochs):
    
 #wandb.finish()
 
+print("Saving model...")
 torch.save(model.state_dict(), MODEL_PATH + "model.pth")
+
+print("Loading model...")
+new_model = LongformerForMaskedLM(config)
+new_model.load_state_dict(torch.load(MODEL_PATH + "model.pth"))
+new_model.eval()
+new_model.to(device)
 
 natural_language_sentence = tokenizer.decode(batch["input_ids"][0])
 print(f"Sentence: {natural_language_sentence}")
 
-token_logits = model(batch["input_ids"][0].unsqueeze(0).to(device))
+token_logits = new_model(batch["input_ids"][0].unsqueeze(0).to(device))
 mask_token_index = torch.where(batch["input_ids"][0] == tokenizer.mask_token_id)[0]
 #select the mask tokens
 mask_token_logits = token_logits[0, mask_token_index, :]
@@ -152,3 +162,5 @@ predictions = top_5_tokens.tolist()
 
 for i, (label, prediction) in enumerate(zip(labels, predictions)):
     print(f"Original: {tokenizer.decode([label])} - Prediction: {tokenizer.decode(prediction)}")
+    
+    

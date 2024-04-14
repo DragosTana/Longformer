@@ -7,11 +7,11 @@ import sys
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(os.path.dirname(SCRIPT_DIR))
 
-from model.config import TransformerConfig
+from model.config import Config
 
 class TestConfigFile(unittest.TestCase):
     def test_transformer_config(self):
-        config = TransformerConfig()
+        config = Config()
         self.assertEqual(config.vocab_size, 30522)
         self.assertEqual(config.model_dim, 768)
         self.assertEqual(config.num_hidden_layers, 12)
@@ -24,7 +24,7 @@ class TestConfigFile(unittest.TestCase):
         self.assertEqual(config.pad_token_id, 0)
         
     def test_types(self):
-        config = TransformerConfig()
+        config = Config()
         self.assertIsInstance(config.vocab_size, int)
         self.assertIsInstance(config.model_dim, int)
         self.assertIsInstance(config.num_hidden_layers, int)
