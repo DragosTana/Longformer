@@ -56,24 +56,25 @@ class Trainer():
         assert self.log == False if self.logger == None else True, "You need to specify a logger if you want to log the training."
         assert self.optimizer != None, "You need to specify an optimizer."
         
-        if logger == "wandb":
-            try:
-                self.wandb = wandb
-                self.wandb.init(
-                    project=self.project_name,
-                    config={
-                        "learning_rate": 5e-5,
-                        "architecture": "Longformer",
-                        "dataset": "Wikipedia",
-                        "epochs": 500,
-                    }
-                )
-            except:
-                self.logger = None
-                self.log = False
-                raise Warning("You need to install wandb to use it as a logger.")
-        elif logger == "tensorboard":
-            raise NotImplementedError("Tensorboard logging is not implemented yet.")
+        if self.log == True:
+            if self.logger == "wandb":
+                try:
+                    self.wandb = wandb
+                    self.wandb.init(
+                        project=self.project_name,
+                        config={
+                            "learning_rate": 5e-5,
+                            "architecture": "Longformer",
+                            "dataset": "Wikipedia",
+                            "epochs": 500,
+                        }
+                    )
+                except:
+                    self.logger = None
+                    self.log = False
+                    raise Warning("You need to install wandb to use it as a logger.")
+            elif logger == "tensorboard":
+                raise NotImplementedError("Tensorboard logging is not implemented yet.")
 
     
     def _continue_training(self, model, optimizer, scheduler=None):
@@ -119,9 +120,9 @@ class Trainer():
     def _train_one_epoch(self, model, dataloader):
         model.train()
         training_loss = 0.0  
-
         with tqdm(enumerate(dataloader), total=len(dataloader)) as pbar:
-            for i, data in pbar:
+            for i, data in enumerate(dataloader):
+                data = {key: value.to(self.device) for key, value in data.items()}
                 self.optimizer.zero_grad()
                 loss = model.train_step(data)
                 loss = loss / self.gradient_accumulation_steps
@@ -131,7 +132,7 @@ class Trainer():
                     self.optimizer.step()
                     self.optimizer.zero_grad()
                     pbar.set_postfix({'Training Loss': training_loss / (i + 1)})  # Update the progress bar with the current loss
-
+                    self.wandb.log({"Batch Loss": training_loss / (i + 1)}) if self.log else None
         return training_loss / len(dataloader)
 
 
@@ -143,6 +144,7 @@ class Trainer():
         with torch.no_grad():
             with tqdm(dataloader, total=len(dataloader)) as pbar:
                 for data in pbar:
+                    data = {key: value.to(self.device) for key, value in data.items()}
                     val_loss += model.validation_step(data)
                     batch_metrics = self.compute_metrics(data)
 
@@ -174,6 +176,7 @@ class Trainer():
             self._has_validation = True
         if self.continue_training:
             model, self.optimizer, _, self.scheduler = self._continue_training(model, self.optimizer, self.scheduler)
+        model.to(self.device)
         
         for epoch in range(self._start_epoch, self.max_epochs):
             start_time = time.time()

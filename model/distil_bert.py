@@ -92,7 +92,7 @@ class MyDistilBertForMaskedLM(nn.Module):
         prediction_logits = self.vocab_projector(prediction_logits)
         return prediction_logits
     
-    def trainig_step(self, batch):
+    def train_step(self, batch):
         input_ids = batch['input_ids']
         attention_mask = batch['attention_mask']
         labels = batch['labels']
