@@ -52,10 +52,10 @@ class MultiHeadAttention(nn.Module):
     Vanilla multi-head attention layer. Straightforward from the "Attention is All You Need" paper.
     
     ### Args:
-        config: a configuration object with the following attributes:
-            dim: the input and output dimension of the layer (default 512)
-            num_attention_heads: the number of attention heads (default 8)
-            attention_probs_dropout_prob: the dropout probability (default 0.1)
+        - config: a configuration object with the following attributes:
+        dim: the input and output dimension of the layer (default 512)
+        num_attention_heads: the number of attention heads (default 8)
+        attention_probs_dropout_prob: the dropout probability (default 0.1)
     """
     def __init__(self, config: Config):
         super().__init__()
@@ -116,7 +116,8 @@ class MultiHeadAttention(nn.Module):
     
 class MultiHeadSelfAttention(MultiHeadAttention):
     """
-    Multi-head self-attention layer for distilBERT. Adds only an additional linear layer for the output.
+    Multi-head self-attention layer for distilBERT. Adds only an additional
+    linear layer for the output, have no idea why.
     """
     def __init__(self, config):
         super().__init__(config)

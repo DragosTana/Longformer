@@ -7,7 +7,7 @@ import sys
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(os.path.dirname(SCRIPT_DIR))
 
-from model.distil_bert import TransformerBlock, Transformer, DistilBERTModel, MyDistilBertForMaskedLM
+from model.distil_bert import MyDistilBertForMaskedLM
 from transformers import DistilBertForMaskedLM, DistilBertConfig
 from model.config import Config
 
@@ -24,11 +24,13 @@ class TestMyDistilBertForMaskedLM(unittest.TestCase):
         cls.original_model = DistilBertForMaskedLM(DistilBertConfig()).from_pretrained("distilbert-base-uncased", cache_dir="./model/weights")
         cls.model.eval(), cls.original_model.eval()
 
+    @torch.no_grad()
     def test_output_size(self):
         input_tensor = torch.randint(0, 30522, (32, 128))
         output_tensor = self.model(input_tensor)
         self.assertEqual(output_tensor.size(), (32, 128, 30522))
-        
+    
+    @torch.no_grad()
     def test_same_output(self):
         input_ids = torch.randint(0, 30522, (1, self.config.max_position_embeddings))
         attention_mask = torch.ones_like(input_ids)
@@ -38,7 +40,8 @@ class TestMyDistilBertForMaskedLM(unittest.TestCase):
         original_output = original_output.logits
         
         self.assertEqual(output.size(), original_output.size())
-        
+    
+    @torch.no_grad()    
     def test_same_output_values(self):
         input_ids = torch.randint(0, 30522, (1, self.config.max_position_embeddings))
         attention_mask = torch.ones_like(input_ids)
@@ -48,8 +51,10 @@ class TestMyDistilBertForMaskedLM(unittest.TestCase):
         original_output = original_output.logits
         
         self.assertTrue(torch.allclose(output, original_output, atol=1e-4))
-        
+    
+    @torch.no_grad()
     def test_same_output_attention_mask(self):
+        #this unwillingly tests also the attention mask handling
         input_ids = torch.randint(0, 30522, (1, self.config.max_position_embeddings))
         attention_mask = torch.ones_like(input_ids)
 
@@ -72,10 +77,13 @@ class TestParamUpdateMyDistilBertForMaskedLM(unittest.TestCase):
         cls.model.load_state_dict(cls.model_state_dict)
         
         cls.original_model = DistilBertForMaskedLM(DistilBertConfig()).from_pretrained("distilbert-base-uncased", cache_dir="./model/weights")
-        cls.model.eval(), cls.original_model.eval()
-        
+        cls.model.train(), cls.original_model.train()
+        cls.device = torch.device('cpu')
+        cls.model.to(cls.device), cls.original_model.to(cls.device)
+    
     def test_param_update(self):
-        input_tensor = torch.randint(0, 30522, (32, 128))
+        input_tensor = torch.randint(0, 30522, (32, self.config.max_position_embeddings))
+        input_tensor = input_tensor.to(self.device)
         optimizer = torch.optim.Adam(self.model.parameters(), lr=1e-3)
         output_tensor = self.model(input_tensor)
         loss = output_tensor.mean()
@@ -84,7 +92,7 @@ class TestParamUpdateMyDistilBertForMaskedLM(unittest.TestCase):
         
         for param in self.model.parameters():
             self.assertTrue(param.grad is not None)
-            
+
 if __name__ == "__main__":
     unittest.main()
        

@@ -8,7 +8,7 @@ Despite the name, this aims to be yet another PyTorch implementation of a [Trans
 
 I used the Huggingface [Transformer](https://github.com/huggingface/transformers) library as a reference. When possible, however, I implemented things from scratch. Hugging Face was used just for:
 
-- **I/O of the training data**: Pretraining requires big datasets, which are difficult and slow to handle on domestic machines. Huggingface provides the [Wikipedia](https://huggingface.co/datasets/wikipedia) dataset in a format that is already memory-mapped relieving me of the burden of having to implement it from scratch.
+- **I/O of the training data**: Pretraining requires big datasets, which are difficult and slow to handle on consumer grade machines. Huggingface provides the [Wikipedia](https://huggingface.co/datasets/wikipedia) dataset in a format that is already memory-mapped relieving me of the burden of having to implement this part from scratch.
 - **Tokenizers**: Huggingface already has several implemented tokenizers, many of which are trained on the same dataset I use. Furthermore, the [fast-tokenizers](https://huggingface.co/learn/nlp-course/en/chapter6/3) are implemented in Rust making them much faster than anything I could have implemented from scratch in Python.
 - **Pretrained models**: All models are implemented from scratch in PyTorch but are compatible with the weights of the pretrained models Hugging Face provides (at least [DistilBERTModel](/model/distil_bert.py/) is).
 

@@ -48,7 +48,7 @@ class Transformer(nn.Module):
     
 class DistilBERTModel(nn.Module):
     """
-    DistilBERT model implementation. 
+    DistilBERT model. 
     """
     def __init__(self, config: Config):
         super().__init__()
@@ -92,39 +92,21 @@ class MyDistilBertForMaskedLM(nn.Module):
         prediction_logits = self.vocab_projector(prediction_logits)
         return prediction_logits
     
-
-if __name__ == "__main__":
-    from transformers import DistilBertConfig, DistilBertForMaskedLM
+    def trainig_step(self, batch):
+        input_ids = batch['input_ids']
+        attention_mask = batch['attention_mask']
+        labels = batch['labels']
+        outputs = self(input_ids, attention_mask)
+        loss = nn.CrossEntropyLoss()(outputs.view(-1, outputs.size(-1)), labels.view(-1))
+        return loss
     
-    # set all seeds for reproducibility
-    
-    
-    model_state_dict = torch.load("./model/weights/distilbert.pth")
-    model = MyDistilBertForMaskedLM(Config(n_layers=6, dim=768, num_attention_heads=12, vocab_size=30522))
-    model.load_state_dict(model_state_dict)
-    
-    real_model = DistilBertForMaskedLM(DistilBertConfig())
-    real_model.load_state_dict(model_state_dict)
-    
-    model.eval()
-    real_model.eval()
-    
-    input_ids = torch.randint(0, 30522, (1, 10))
-    attention_mask = torch.ones_like(input_ids)
-     
-    output = model(input_ids, attention_mask)
-    real_output = real_model(input_ids, attention_mask)
-    real_output = real_output.logits
-    print("Output shape:", output.shape)
-    print("Real output shape:", real_output.shape)
-    
-    prediction = output.argmax(-1)
-    real_prediction = real_output.argmax(-1)
-    print("Prediction:", prediction)
-    print("Real prediction:", real_prediction)
-    
-    assert torch.allclose(output, real_output, atol=1e-3)
-    print("All tests passed!")
+    def validation_step(self, batch):
+        input_ids = batch['input_ids']
+        attention_mask = batch['attention_mask']
+        labels = batch['labels']
+        outputs = self(input_ids, attention_mask)
+        loss = nn.CrossEntropyLoss()(outputs.view(-1, outputs.size(-1)), labels.view(-1))
+        return loss
     
     
     
