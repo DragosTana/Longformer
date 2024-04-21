@@ -145,8 +145,9 @@ class Trainer():
             with tqdm(dataloader, total=len(dataloader)) as pbar:
                 for data in pbar:
                     data = {key: value.to(self.device) for key, value in data.items()}
-                    val_loss += model.validation_step(data)
-                    batch_metrics = self.compute_metrics(data)
+                    loss, outputs = model.validation_step(data)
+                    val_loss += loss.item()
+                    batch_metrics = self.compute_metrics(data, outputs) if self.compute_metrics else {}
 
                     for metric_name, metric_value in batch_metrics.items():
                         if metric_name not in aggregated_metrics:

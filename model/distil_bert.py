@@ -98,7 +98,7 @@ class MyDistilBertForMaskedLM(nn.Module):
         labels = batch['labels']
         outputs = self(input_ids, attention_mask)
         loss = nn.CrossEntropyLoss()(outputs.view(-1, outputs.size(-1)), labels.view(-1))
-        return loss
+        return loss, outputs
     
     def validation_step(self, batch):
         input_ids = batch['input_ids']
@@ -106,7 +106,7 @@ class MyDistilBertForMaskedLM(nn.Module):
         labels = batch['labels']
         outputs = self(input_ids, attention_mask)
         loss = nn.CrossEntropyLoss()(outputs.view(-1, outputs.size(-1)), labels.view(-1))
-        return loss    
+        return loss, outputs
 
 class MyDistiBertClassification(nn.Module):
     """
@@ -146,7 +146,7 @@ class MyDistiBertClassification(nn.Module):
         labels = batch['labels']
         outputs = self(input_ids, attention_mask)
         loss = nn.CrossEntropyLoss()(outputs, labels)
-        return loss
+        return loss, outputs
     
     def validation_step(self, batch):
         input_ids = batch['input_ids']
@@ -154,4 +154,4 @@ class MyDistiBertClassification(nn.Module):
         labels = batch['labels']
         outputs = self(input_ids, attention_mask)
         loss = nn.CrossEntropyLoss()(outputs, labels)
-        return loss
+        return loss, outputs

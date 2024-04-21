@@ -1,4 +1,5 @@
 from transformers import DataCollatorForLanguageModeling
+from transformers import DistilBertForMaskedLM
 from torch.utils.data import DataLoader
 import torch
 from model.distil_bert import MyDistilBertForMaskedLM
@@ -14,8 +15,15 @@ test_loader = DataLoader(test, batch_size=8, shuffle=False, collate_fn=datacolla
 
 config = Config(n_layers=6, dim=768, num_attention_heads=12, vocab_size=30522)
 model = MyDistilBertForMaskedLM(config)
-model_state_dict = torch.load("./model/weights/distilbert.pth")
-model.load_state_dict(model_state_dict)
+try:
+    model_state_dict = torch.load("./model/weights/distilbert.pth")
+    model.load_state_dict(model_state_dict, strict=False)
+except:
+    # If the model is not found we will load the pretrained model from the Hugging Face library
+    model_hf = DistilBertForMaskedLM.from_pretrained("distilbert-base-uncased", cache_dir="./model/weights/")
+    model_hf.save("./model/weights/distilbert.pth")
+    model_state_dict = torch.load("./model/weights/distilbert.pth")
+    model.load_state_dict(model_state_dict, strict=False)
 
 optimizer = torch.optim.Adam(model.parameters(), lr=5e-5)   
 scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=5, gamma=0.1)
