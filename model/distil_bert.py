@@ -106,11 +106,52 @@ class MyDistilBertForMaskedLM(nn.Module):
         labels = batch['labels']
         outputs = self(input_ids, attention_mask)
         loss = nn.CrossEntropyLoss()(outputs.view(-1, outputs.size(-1)), labels.view(-1))
+        return loss    
+
+class MyDistiBertClassification(nn.Module):
+    """
+    DistilBERT model for text classification.
+    """
+    def __init__(self, config: Config):
+        super().__init__()
+        self.activation = get_activation(config.activation)
+        self.distilbert = DistilBERTModel(config)
+        self.pre_classifier = nn.Linear(config.dim, config.dim)
+        self.classifier = nn.Linear(config.dim,config.num_labels)
+        self.dropout = nn.Dropout(config.dropout)
+        
+    def forward(self, input_ids, attention_mask=None):
+        if attention_mask is None:
+            extended_attention_mask = None
+        else:
+            extended_attention_mask = self._generate_attention_mask(attention_mask)
+            
+        hidden_states = self.distilbert(input_ids, extended_attention_mask) #[batch_size, seq_len, dim]
+        hidden_states = hidden_states[:, 0] # [batch_size, dim]
+        hidden_states = self.pre_classifier(hidden_states)  # [batch_size, dim]
+        hidden_states = self.activation(hidden_states)  # [batch_size, dim]
+        hidden_states = self.dropout(hidden_states) # [batch_size, dim]
+        logits = self.classifier(hidden_states) # [batch_size, num_labels]
+        return logits
+    
+    def _generate_attention_mask(self, attention_mask):
+        attention_mask = attention_mask.unsqueeze(1).unsqueeze(2)
+        attention_mask = attention_mask.to(dtype=next(self.parameters()).dtype)
+        attention_mask = (1.0 - attention_mask) * -1e9
+        return attention_mask
+    
+    def train_step(self, batch):
+        input_ids = batch['input_ids']
+        attention_mask = batch['attention_mask']
+        labels = batch['labels']
+        outputs = self(input_ids, attention_mask)
+        loss = nn.CrossEntropyLoss()(outputs, labels)
         return loss
     
-    
-    
-
-        
-
-        
+    def validation_step(self, batch):
+        input_ids = batch['input_ids']
+        attention_mask = batch['attention_mask']
+        labels = batch['labels']
+        outputs = self(input_ids, attention_mask)
+        loss = nn.CrossEntropyLoss()(outputs, labels)
+        return loss

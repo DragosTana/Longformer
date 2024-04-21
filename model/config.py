@@ -51,5 +51,13 @@ class Config():
         self.dropout = dropout
         self.sinusoidal_pos_embds = sinusoidal_pos_embds
         
+class ConfigClassification(Config):
+    def __init__(
+        self,
+        num_labels: int = 2,
+        **kwargs,
+    ):
+        super().__init__(**kwargs)
+        self.num_labels = num_labels
         
         

@@ -213,3 +213,29 @@ class LongformerSelfAttention(nn.Module):
                 attn_weights = attn_weights.permute(0, 2, 1, 3)
         outputs = (context_layer, attn_weights) if output_attentions else (context_layer,)
         return outputs
+    
+def get_attn_mask(n, attn_mode, local_attn_ctx=None):
+    if attn_mode == 'all':
+        b = torch.tril(torch.ones([n, n]))
+    elif attn_mode == 'local':
+        bandwidth = local_attn_ctx
+        ctx = min(n - 1, bandwidth - 1)
+        b = torch.tril(torch.ones([n, n]), ctx)
+    elif attn_mode == 'strided':
+        stride = local_attn_ctx
+        x = torch.reshape(torch.arange(n, dtype=torch.int32), [n, 1])
+        y = torch.transpose(x, 0, 1)
+        z = torch.zeros([n, n], dtype=torch.int32)
+        q = z + x
+        k = z + y
+        c1 = q >= k
+        c2 = torch.eq(torch.fmod(q - k, stride), 0)
+        c3 = torch.logical_and(c1, c2)
+        b = c3.float()
+    else:
+        raise ValueError('Not yet implemented')
+    b = torch.reshape(b, [1, 1, n, n])
+    return b
+
+prova = get_attn_mask(10, 'local', 2)
+print(prova)

@@ -15,4 +15,4 @@ I used the Huggingface [Transformer](https://github.com/huggingface/transformers
 
 ## Methodological note:
 
-I was asked to implement 
+I was asked to implement a Longformer and reproduce at least some of the results from the paper

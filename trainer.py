@@ -121,7 +121,7 @@ class Trainer():
         model.train()
         training_loss = 0.0  
         with tqdm(enumerate(dataloader), total=len(dataloader)) as pbar:
-            for i, data in enumerate(dataloader):
+            for i, data in pbar:
                 data = {key: value.to(self.device) for key, value in data.items()}
                 self.optimizer.zero_grad()
                 loss = model.train_step(data)
@@ -179,7 +179,6 @@ class Trainer():
         model.to(self.device)
         
         for epoch in range(self._start_epoch, self.max_epochs):
-            start_time = time.time()
             
             # Training
             for dataloader in train_dataloaders:
