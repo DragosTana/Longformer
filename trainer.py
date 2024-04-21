@@ -124,7 +124,7 @@ class Trainer():
             for i, data in pbar:
                 data = {key: value.to(self.device) for key, value in data.items()}
                 self.optimizer.zero_grad()
-                loss = model.train_step(data)
+                loss, _ = model.train_step(data)
                 loss = loss / self.gradient_accumulation_steps
                 loss.backward()
                 training_loss += loss.item()
