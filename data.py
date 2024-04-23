@@ -9,8 +9,8 @@ class WikiDataset(Dataset):
     Wikipedia dataset for pretraining. Loads the wikipedia dataset and tokenizes the text data.
     """
     def __init__(self,
-                 tokenizer_name: str = "roberta-base",
-                 max_seq_len: int = 128,
+                 tokenizer_name: str = "distilbert-base-uncased",
+                 max_seq_len: int = 512,
                  num_workers: int = 16,
                  cache_dir: str = "./data", 
                  shuffle: bool = False,
@@ -39,9 +39,9 @@ class WikiDataset(Dataset):
         test_size = len(self) - train_size
         return torch.utils.data.random_split(self, [train_size, test_size]) 
     
-    def _process_data(self, data, tokenizer):
+    def _process_data(self, data):
         """Tokenize the text data."""
-        return tokenizer(["".join(x) for x in data["text"]])   
+        return self.tokenizer(["".join(x) for x in data["text"]])   
     
     def _group_texts(self, examples, max_seq_len=128, pad_token_id=1):
         """Group texts together in a dataset so that they match the block size.
@@ -78,8 +78,8 @@ class WikiDataset(Dataset):
     
 class IMDB(Dataset):
     def __init__(self,
-             tokenizer_name: str = "roberta-base",
-             max_seq_len: int = 128,
+             tokenizer_name: str = "distilbert-base-uncased",
+             max_seq_len: int = 512,
              num_workers: int = 16,
              cache_dir: str = "./data", 
              shuffle: bool = False,
@@ -94,8 +94,8 @@ class IMDB(Dataset):
         self.data = self._raw_text_to_tokens()
         print("IMDB dataset loaded and tokenized!")
         
-    def _preprocess_data(self, data):
-        return self.tokenizer(data["text"], truncation=True, padding="max_length", max_length=self.max_seq_len)
+    def _preprocess_data(self, examples):
+        return self.tokenizer(examples["text"], truncation=True, padding="max_length", max_length=self.max_seq_len)
     
     def _raw_text_to_tokens(self):
         print("Loading IMDB dataset...")
@@ -112,19 +112,87 @@ class IMDB(Dataset):
     def __getitem__(self, idx):
         return self.data[idx]
 
-if __name__ == "__main__":
-    import torch
-    from torch.utils.data import DataLoader
-    from transformers import DataCollatorWithPadding
-    
-    imdb = IMDB(tokenizer_name="distilbert-base-uncased", max_seq_len=512, num_workers=16, cache_dir="./data", shuffle=True)
-    datacollator = DataCollatorWithPadding(tokenizer=imdb.tokenizer)
-    train, test = imdb.split()
-    train_loader = DataLoader(train, batch_size=4, shuffle=True, collate_fn=datacollator)
-    test_loader = DataLoader(test, batch_size=4, shuffle=False, collate_fn=datacollator)
-    
-    for batch in train_loader:
-        print(batch["input_ids"].shape)
-        print(batch["attention_mask"].shape)
-        print(batch["labels"].shape)
+class SQuAD(Dataset):
+    def __init__(self,
+             tokenizer_name: str = "distilbert-base-uncased",
+             max_seq_len: int = 512,
+             num_workers: int = 16,
+             cache_dir: str = "./data", 
+             shuffle: bool = False,
+             ): 
+        self.tokenizer_name = tokenizer_name
+        self.max_seq_len = max_seq_len
+        self.num_workers = num_workers
+        self.cache_dir = cache_dir
+        self.shuffle = shuffle
         
+        self.tokenizer = AutoTokenizer.from_pretrained(self.tokenizer_name, use_fast=True, return_tensors="pt")
+        self.data = self._raw_text_to_tokens()
+        print("SQuAD dataset loaded and tokenized!")
+        
+    def _preprocess_data(self, examples):
+        questions = [q.strip() for q in examples["question"]]
+        inputs = self.tokenizer(
+            questions,
+            examples["context"],
+            max_length=384,
+            truncation="only_second",
+            return_offsets_mapping=True,
+            padding="max_length",
+        )
+
+        offset_mapping = inputs.pop("offset_mapping")
+        answers = examples["answers"]
+        start_positions = []
+        end_positions = []
+
+        for i, offset in enumerate(offset_mapping):
+            answer = answers[i]
+            start_char = answer["answer_start"][0]
+            end_char = answer["answer_start"][0] + len(answer["text"][0])
+            sequence_ids = inputs.sequence_ids(i)
+
+            # Find the start and end of the context
+            idx = 0
+            while sequence_ids[idx] != 1:
+                idx += 1
+            context_start = idx
+            while sequence_ids[idx] == 1:
+                idx += 1
+            context_end = idx - 1
+
+            # If the answer is not fully inside the context, label it (0, 0)
+            if offset[context_start][0] > end_char or offset[context_end][1] < start_char:
+                start_positions.append(0)
+                end_positions.append(0)
+            else:
+                # Otherwise it's the start and end token positions
+                idx = context_start
+                while idx <= context_end and offset[idx][0] <= start_char:
+                    idx += 1
+                start_positions.append(idx - 1)
+
+                idx = context_end
+                while idx >= context_start and offset[idx][1] >= end_char:
+                    idx -= 1
+                end_positions.append(idx + 1)
+
+        inputs["start_positions"] = start_positions
+        inputs["end_positions"] = end_positions
+        return inputs
+    
+    def _raw_text_to_tokens(self):
+        print("Loading SQuAD dataset...")
+        raw_data = load_dataset("squad", cache_dir=self.cache_dir, trust_remote_code=True)
+        tokenized_squad = raw_data.map(self._preprocess_data, batched=True, num_proc=self.num_workers, remove_columns=["question", "context"])
+        return tokenized_squad
+    
+    def split(self):
+        return self.data["train"], self.data["validation"]
+    
+    def __len__(self):
+        return len(self.data)
+    
+    def __getitem__(self, idx):
+        return self.data[idx]
+    

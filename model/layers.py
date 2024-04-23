@@ -267,4 +267,10 @@ class Embeddings(nn.Module):
         embeddings = self.LayerNorm(embeddings)  # (bs, max_seq_length, dim)
         embeddings = self.dropout(embeddings)  # (bs, max_seq_length, dim)
         return embeddings
+    
+def _generate_attention_mask(self, attention_mask):
+    attention_mask = attention_mask.unsqueeze(1).unsqueeze(2)
+    attention_mask = attention_mask.to(dtype=next(self.parameters()).dtype)
+    attention_mask = (1.0 - attention_mask) * -1e9
+    return attention_mask
         

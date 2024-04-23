@@ -26,7 +26,7 @@ except:
     model.load_state_dict(model_state_dict, strict=False)
 
 optimizer = torch.optim.Adam(model.parameters(), lr=2e-05, betas=(0.9, 0.999), eps=1e-08, weight_decay=0, amsgrad=False)
-scheduler = torch.optim.lr_scheduler.LinearLR(optimizer)    
+scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=1, gamma=0.1)
 
 def compute_metrics(data, outputs):
     predictions = torch.argmax(outputs, dim=-1)

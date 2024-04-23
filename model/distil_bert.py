@@ -120,6 +120,12 @@ class MyDistiBertClassification(nn.Module):
         self.classifier = nn.Linear(config.dim,config.num_labels)
         self.dropout = nn.Dropout(config.dropout)
         
+    def _generate_attention_mask(self, attention_mask):
+        attention_mask = attention_mask.unsqueeze(1).unsqueeze(2)
+        attention_mask = attention_mask.to(dtype=next(self.parameters()).dtype)
+        attention_mask = (1.0 - attention_mask) * -1e9
+        return attention_mask
+    
     def forward(self, input_ids, attention_mask=None):
         if attention_mask is None:
             extended_attention_mask = None
@@ -133,12 +139,6 @@ class MyDistiBertClassification(nn.Module):
         hidden_states = self.dropout(hidden_states) # [batch_size, dim]
         logits = self.classifier(hidden_states) # [batch_size, num_labels]
         return logits
-    
-    def _generate_attention_mask(self, attention_mask):
-        attention_mask = attention_mask.unsqueeze(1).unsqueeze(2)
-        attention_mask = attention_mask.to(dtype=next(self.parameters()).dtype)
-        attention_mask = (1.0 - attention_mask) * -1e9
-        return attention_mask
     
     def train_step(self, batch):
         input_ids = batch['input_ids']
@@ -155,3 +155,49 @@ class MyDistiBertClassification(nn.Module):
         outputs = self(input_ids, attention_mask)
         loss = nn.CrossEntropyLoss()(outputs, labels)
         return loss, outputs
+    
+class MyDistilBertForQuestionAnswering(nn.Module):
+    def __init__(self, config: Config):
+        super().__init__()
+        self.distilbert = DistilBERTModel(config)
+        self.qa_outputs = nn.Linear(config.dim, 2)
+        self.dropout = nn.Dropout(config.qa_dropout)
+
+    def _generate_attention_mask(self, attention_mask):
+        attention_mask = attention_mask.unsqueeze(1).unsqueeze(2)
+        attention_mask = attention_mask.to(dtype=next(self.parameters()).dtype)
+        attention_mask = (1.0 - attention_mask) * -1e9
+        return attention_mask
+        
+    def forward(self, input_ids, attention_mask=None):
+        hidden_states = self.distilbert(input_ids, attention_mask) # [batch_size, seq_len, dim]
+        hidden_states = self.dropout(hidden_states) # [batch_size, seq_len, dim] NOTE: why dropout here?
+        logits = self.qa_outputs(hidden_states) # [batch_size, seq_len, 2]
+        start_logits, end_logits = logits.split(1, dim=-1) # [batch_size, seq_len, 1], [batch_size, seq_len, 1]
+        
+        return start_logits.squeeze(-1).contiguous(), end_logits.squeeze(-1).contiguous()
+    
+    def train_step(self, batch):
+        input_ids = batch['input_ids']
+        attention_mask = batch['attention_mask']
+        start_positions = batch['start_positions']
+        end_positions = batch['end_positions']
+        start_logits, end_logits = self(input_ids, attention_mask)
+        loss_fct = nn.CrossEntropyLoss()
+        start_loss = loss_fct(start_logits, start_positions)
+        end_loss = loss_fct(end_logits, end_positions)
+        total_loss = (start_loss + end_loss)
+        return total_loss, (start_logits, end_logits)
+        
+    def validation_step(self, batch):
+        input_ids = batch['input_ids']
+        attention_mask = batch['attention_mask']
+        start_positions = batch['start_positions']
+        end_positions = batch['end_positions']
+        start_logits, end_logits = self(input_ids, attention_mask)
+        loss_fct = nn.CrossEntropyLoss()
+        start_loss = loss_fct(start_logits, start_positions)
+        end_loss = loss_fct(end_logits, end_positions)
+        total_loss = (start_loss + end_loss)
+        return total_loss, (start_logits, end_logits)
+        
