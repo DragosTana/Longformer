@@ -161,7 +161,7 @@ class MyDistilBertForQuestionAnswering(nn.Module):
         super().__init__()
         self.distilbert = DistilBERTModel(config)
         self.qa_outputs = nn.Linear(config.dim, 2)
-        self.dropout = nn.Dropout(config.qa_dropout)
+        self.dropout = nn.Dropout(config.dropout)
 
     def _generate_attention_mask(self, attention_mask):
         attention_mask = attention_mask.unsqueeze(1).unsqueeze(2)
@@ -170,7 +170,12 @@ class MyDistilBertForQuestionAnswering(nn.Module):
         return attention_mask
         
     def forward(self, input_ids, attention_mask=None):
-        hidden_states = self.distilbert(input_ids, attention_mask) # [batch_size, seq_len, dim]
+        if attention_mask is None:
+            extended_attention_mask = None
+        else:
+            extended_attention_mask = self._generate_attention_mask(attention_mask)
+        
+        hidden_states = self.distilbert(input_ids, extended_attention_mask) # [batch_size, seq_len, dim]
         hidden_states = self.dropout(hidden_states) # [batch_size, seq_len, dim] NOTE: why dropout here?
         logits = self.qa_outputs(hidden_states) # [batch_size, seq_len, 2]
         start_logits, end_logits = logits.split(1, dim=-1) # [batch_size, seq_len, 1], [batch_size, seq_len, 1]

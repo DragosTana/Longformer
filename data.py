@@ -113,6 +113,21 @@ class IMDB(Dataset):
         return self.data[idx]
 
 class SQuAD(Dataset):
+    """
+    SQuAD dataset for question answering. Loads the SQuAD dataset from hugginface, tokenizes and preprocesses the data
+    to make the input suitable for the model. Please reference the following link https://huggingface.co/datasets/rajpurkar/squad
+    for more information about the dataset structure.
+    
+    The input to the model is a dictionary with the following keys:
+    input_ids: tokenized input
+    attention_mask: attention mask
+    start_positions: start token position of the answer
+    end_positions: end token position of the answer
+    
+    The input_ids is formatted as follows:
+    [CLS] question [SEP] context [SEP]
+    
+    """
     def __init__(self,
              tokenizer_name: str = "distilbert-base-uncased",
              max_seq_len: int = 512,
@@ -131,18 +146,21 @@ class SQuAD(Dataset):
         print("SQuAD dataset loaded and tokenized!")
         
     def _preprocess_data(self, examples):
-        questions = [q.strip() for q in examples["question"]]
+        questions = examples["question"]
+        contexts = examples["context"]
+        answers = examples["answers"]
+        
         inputs = self.tokenizer(
             questions,
-            examples["context"],
-            max_length=384,
+            contexts,
+            max_length=self.max_seq_len,
             truncation="only_second",
             return_offsets_mapping=True,
             padding="max_length",
         )
 
         offset_mapping = inputs.pop("offset_mapping")
-        answers = examples["answers"]
+
         start_positions = []
         end_positions = []
 
@@ -179,16 +197,21 @@ class SQuAD(Dataset):
 
         inputs["start_positions"] = start_positions
         inputs["end_positions"] = end_positions
+        
         return inputs
     
     def _raw_text_to_tokens(self):
         print("Loading SQuAD dataset...")
         raw_data = load_dataset("squad", cache_dir=self.cache_dir, trust_remote_code=True)
-        tokenized_squad = raw_data.map(self._preprocess_data, batched=True, num_proc=self.num_workers, remove_columns=["question", "context"])
+        # remove the columns that are not needed
+        raw_data = raw_data.remove_columns(["id", "title"])
+        tokenized_squad = raw_data.map(self._preprocess_data, batched=True, num_proc=self.num_workers, remove_columns=["question", "context", "answers"])
         return tokenized_squad
     
     def split(self):
-        return self.data["train"], self.data["validation"]
+        train = self.data["train"]
+        val = self.data["validation"]
+        return train, val
     
     def __len__(self):
         return len(self.data)
@@ -196,3 +219,25 @@ class SQuAD(Dataset):
     def __getitem__(self, idx):
         return self.data[idx]
     
+if __name__ == "__main__":
+    
+    from torch.utils.data import DataLoader
+    from transformers import DistilBertTokenizerFast
+    from transformers import DefaultDataCollator
+    qa = SQuAD(shuffle=True)
+    train, val = qa.split()
+    
+    datacollator = DefaultDataCollator()
+    dataloader = DataLoader(train, batch_size=1, collate_fn=datacollator)
+    batch = next(iter(dataloader))
+    
+    #decode the batch
+    print("Question and context: ")
+    print(qa.tokenizer.decode(batch["input_ids"][0]))
+    
+    print("Answer: ")
+    start = batch["start_positions"].item()
+    end = batch["end_positions"].item()
+    print(qa.tokenizer.decode(batch["input_ids"][0][start:end]))
+
+
