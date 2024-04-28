@@ -1,7 +1,12 @@
 from torch import nn
-from sliding_chunks import  sliding_chunks_matmul_qk, sliding_chunks_matmul_pv, \
-                            sliding_chunks_no_overlap_matmul_qk, sliding_chunks_no_overlap_matmul_pv, \
-                            mask_invalid_locations
+try:
+    from sliding_chunks import  sliding_chunks_matmul_qk, sliding_chunks_matmul_pv, \
+                                sliding_chunks_no_overlap_matmul_qk, sliding_chunks_no_overlap_matmul_pv, \
+                                mask_invalid_locations
+except:
+    from .sliding_chunks import  sliding_chunks_matmul_qk, sliding_chunks_matmul_pv, \
+                                sliding_chunks_no_overlap_matmul_qk, sliding_chunks_no_overlap_matmul_pv, \
+                                mask_invalid_locations
 import math
 import torch
 import torch.nn.functional as F
@@ -9,23 +14,23 @@ import torch.nn.functional as F
 class LongformerSelfAttention(nn.Module):
     def __init__(self, config, layer_id):
         super(LongformerSelfAttention, self).__init__()
-        if config.hidden_size % config.num_attention_heads != 0:
+        if config.dim % config.num_attention_heads != 0:
             raise ValueError(
                 "The hidden size (%d) is not a multiple of the number of attention "
-                "heads (%d)" % (config.hidden_size, config.num_attention_heads))
+                "heads (%d)" % (config.dim, config.num_attention_heads))
         self.num_heads = config.num_attention_heads
-        self.head_dim = int(config.hidden_size / config.num_attention_heads)
-        self.embed_dim = config.hidden_size
+        self.head_dim = int(config.dim / config.num_attention_heads)
+        self.embed_dim = config.dim
 
-        self.query = nn.Linear(config.hidden_size, self.embed_dim)
-        self.key = nn.Linear(config.hidden_size, self.embed_dim)
-        self.value = nn.Linear(config.hidden_size, self.embed_dim)
+        self.query = nn.Linear(config.dim, self.embed_dim)
+        self.key = nn.Linear(config.dim, self.embed_dim)
+        self.value = nn.Linear(config.dim, self.embed_dim)
 
-        self.query_global = nn.Linear(config.hidden_size, self.embed_dim)
-        self.key_global = nn.Linear(config.hidden_size, self.embed_dim)
-        self.value_global = nn.Linear(config.hidden_size, self.embed_dim)
+        self.query_global = nn.Linear(config.dim, self.embed_dim)
+        self.key_global = nn.Linear(config.dim, self.embed_dim)
+        self.value_global = nn.Linear(config.dim, self.embed_dim)
 
-        self.dropout = config.attention_probs_dropout_prob
+        self.dropout = config.attention_dropout
 
         self.layer_id = layer_id
         self.attention_window = config.attention_window[self.layer_id]
@@ -106,8 +111,8 @@ class LongformerSelfAttention(nn.Module):
             raise False
         mask_invalid_locations(attn_weights, self.attention_window, self.attention_dilation, False)
         if remove_from_windowed_attention_mask is not None:
-            # This implementation is fast and takes very little memory because num_heads x hidden_size = 1
-            # from (bsz x seq_len) to (bsz x seq_len x num_heads x hidden_size)
+            # This implementation is fast and takes very little memory because num_heads x dim = 1
+            # from (bsz x seq_len) to (bsz x seq_len x num_heads x dim)
             remove_from_windowed_attention_mask = remove_from_windowed_attention_mask.unsqueeze(dim=-1).unsqueeze(dim=-1)
             # cast to float/half then replace 1's with -inf
             float_mask = remove_from_windowed_attention_mask.type_as(q).masked_fill(remove_from_windowed_attention_mask, -10000.0)
@@ -213,29 +218,3 @@ class LongformerSelfAttention(nn.Module):
                 attn_weights = attn_weights.permute(0, 2, 1, 3)
         outputs = (context_layer, attn_weights) if output_attentions else (context_layer,)
         return outputs
-    
-def get_attn_mask(n, attn_mode, local_attn_ctx=None):
-    if attn_mode == 'all':
-        b = torch.tril(torch.ones([n, n]))
-    elif attn_mode == 'local':
-        bandwidth = local_attn_ctx
-        ctx = min(n - 1, bandwidth - 1)
-        b = torch.tril(torch.ones([n, n]), ctx)
-    elif attn_mode == 'strided':
-        stride = local_attn_ctx
-        x = torch.reshape(torch.arange(n, dtype=torch.int32), [n, 1])
-        y = torch.transpose(x, 0, 1)
-        z = torch.zeros([n, n], dtype=torch.int32)
-        q = z + x
-        k = z + y
-        c1 = q >= k
-        c2 = torch.eq(torch.fmod(q - k, stride), 0)
-        c3 = torch.logical_and(c1, c2)
-        b = c3.float()
-    else:
-        raise ValueError('Not yet implemented')
-    b = torch.reshape(b, [1, 1, n, n])
-    return b
-
-prova = get_attn_mask(10, 'local', 2)
-print(prova)

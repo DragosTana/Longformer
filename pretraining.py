@@ -21,7 +21,7 @@ try:
 except:
     # If the model is not found we will load the pretrained model from the Hugging Face library
     model_hf = DistilBertForMaskedLM.from_pretrained("distilbert-base-uncased", cache_dir="./model/weights/")
-    model_hf.save("./model/weights/distilbert.pth")
+    torch.save(model_hf.state_dict(), "./model/weights/distilbert.pth")
     model_state_dict = torch.load("./model/weights/distilbert.pth")
     model.load_state_dict(model_state_dict, strict=False)
 
