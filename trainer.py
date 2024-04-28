@@ -205,5 +205,5 @@ class Trainer():
         model_name = model.__class__.__name__
         torch.save(model.state_dict(), self.default_root_dir + "weights/{}_final.model".format(model_name))
         
-        if self.logger == "wandb":
+        if self.logger == "wandb" and self.log == True:
             self.wandb.finish()
