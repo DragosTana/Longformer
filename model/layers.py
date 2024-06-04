@@ -18,12 +18,6 @@ class PositionWiseFeedForward(nn.Module):
     """
     Position-wise feed-forward layer. Straightforward from the "Attention is All You Need" paper
     with the exception of the dropout layer.
-    
-    ### Args:
-        config: a configuration object with the following attributes:
-            dim: the input and output dimension of the layer (default 512)
-            ffn_dim: the dimension of the intermediate layer (default 2048)
-            hidden_dropout_prob: the dropout probability (default 0.1)
     """
     def __init__(self, config: Config):
         super().__init__()
@@ -50,12 +44,6 @@ class PositionWiseFeedForward(nn.Module):
 class MultiHeadAttention(nn.Module):
     """
     Vanilla multi-head attention layer. Straightforward from the "Attention is All You Need" paper.
-    
-    ### Args:
-        - config: a configuration object with the following attributes:
-        dim: the input and output dimension of the layer (default 512)
-        num_attention_heads: the number of attention heads (default 8)
-        attention_probs_dropout_prob: the dropout probability (default 0.1)
     """
     def __init__(self, config: Config):
         super().__init__()
@@ -80,29 +68,26 @@ class MultiHeadAttention(nn.Module):
         x = x.view(*new_x_shape)
         return x.permute(0, 2, 1, 3)
     
-    def forward(self, query, key, value, mask=None):
+    def forward(self, hidden_states, mask=None):
         """
         Forward pass of the multi-head attention layer.
         
         ### Args:
-            - query: a float tensor with shape [batch_size, sequence_length, dim]
-            - key: a float tensor with shape [batch_size, sequence_length, dim]
-            - value: a float tensor with shape [batch_size, sequence_length, dim]
+            - hidden_states: a float tensor with shape [batch_size, sequence_length, dim]
             - mask (optional): a float tensor with shape [batch_size, 1, 1, sequence_length]
         ### Outputs:
             - a float tensor with shape [batch_size, sequence_length, dim]
         """
 
-        query = self.q_lin(query) #[batch_size, sequence_length, dim]
-        key = self.k_lin(key)
-        value = self.v_lin(value)
+        query = self.q_lin(hidden_states) #[batch_size, sequence_length, dim]
+        key = self.k_lin(hidden_states)
+        value = self.v_lin(hidden_states)
         
         query = self.transpose_for_scores(query) #[batch_size, num_attention_heads, sequence_length, attention_head_size]
         key = self.transpose_for_scores(key)
         value = self.transpose_for_scores(value)
 
-        attention_scores = torch.matmul(query, key.transpose(-1, -2))
-        attention_scores = attention_scores / (self.attention_head_size ** 0.5)
+        attention_scores = torch.matmul(query, key.transpose(-1, -2)) / (self.attention_head_size ** 0.5)
         attention_scores = attention_scores + mask if mask is not None else attention_scores
         attention_probs = torch.nn.functional.softmax(attention_scores, dim=-1)
 
@@ -123,128 +108,47 @@ class MultiHeadSelfAttention(MultiHeadAttention):
         super().__init__(config)
         self.out_lin = nn.Linear(in_features=config.dim, out_features=config.dim)
     
-    def forward(self, query, key, value, mask=None):
-        x = super().forward(query, key, value, mask)
+    def forward(self, hidden_state, attention_mask=None):
+        x = super().forward(hidden_state, attention_mask)
         x = self.out_lin(x)
         return x
 
-class EncoderLayer(nn.Module):
-    """
-    Encoder layer of the transformer. Copied from the "Attention is All You Need" paper.
-    
-    ### Args:
-        - config: a configuration object `Config`
-    """
-    def __init__(self, config: Config):
-        super().__init__()
-        self.self_attention = MultiHeadAttention(config)
-        self.feed_forward = PositionWiseFeedForward(config)
-        self.layer_norm1 = nn.LayerNorm(config.dim)
-        self.layer_norm2 = nn.LayerNorm(config.dim, 1e-12)
-        self.dropout = nn.Dropout(config.hidden_dropout_prob)
-        
-    def forward(self, hidden_states):
-        """
-        Feed-forward pass of the encoder layer.
-        
-        ### Args:
-            - hidden_states: a float tensor with shape [batch_size, sequence_length, dim]
-        ### Outputs:
-            - a float tensor with shape [batch_size, sequence_length, dim]
-        """
-        # self-attention + layer norm
-        _hidden_states = self.self_attention(hidden_states, hidden_states, hidden_states)
-        _hidden_states = self.dropout(_hidden_states)
-        hidden_states = self.layer_norm1(hidden_states + _hidden_states)
-        
-        # feed-forward + layer norm
-        _hidden_states = self.feed_forward(hidden_states)
-        _hidden_states = self.dropout(_hidden_states)
-        hidden_states = self.layer_norm2(hidden_states + _hidden_states)
-        return hidden_states
-        
-class DecoderLayer(nn.Module):
-    """
-    Decoder layer of the transformer. Copied from the "Attention is All You Need" paper.
-    
-    ### Args:
-        - config: a configuration object `Config` 
-    """
-    def __init__(self, config):
-        super().__init__()
-        self.self_attention = MultiHeadAttention(config)
-        self.layer_norm1 = nn.LayerNorm(config.dim)
-        self.cross_attention = MultiHeadAttention(config)
-        self.layer_norm2 = nn.LayerNorm(config.dim)
-        self.feed_forward = PositionWiseFeedForward(config)
-        self.layer_norm3 = nn.LayerNorm(config.dim)
-        self.dropout = nn.Dropout(config.hidden_dropout_prob)
-        
-    def forward(self, hidden_states, encoder_hidden_states):
-        """
-        Feed-forward pass of the decoder layer.
-        
-        ### Args:
-            - hidden_states: a float tensor with shape [batch_size, sequence_length, dim]
-            - encoder_hidden_states (optional): a float tensor with shape [batch_size, sequence_length, dim].
-                If provided, the decoder layer will perform cross-attention over the encoder_hidden_states.
-        """
-        
-        # self-attention + layer norm
-        _hidden_states = self.self_attention(hidden_states, hidden_states, hidden_states)
-        _hidden_states = self.dropout(_hidden_states)
-        hidden_states = self.layer_norm1(hidden_states + _hidden_states)
-        
-        # cross-attention + layer norm
-        _hidden_states = self.cross_attention(hidden_states, encoder_hidden_states, encoder_hidden_states)
-        _hidden_states = self.dropout(_hidden_states)
-        hidden_states = self.layer_norm2(hidden_states + _hidden_states)
-        
-        # feed-forward + layer norm
-        _hidden_states = self.feed_forward(hidden_states)
-        _hidden_states = self.dropout(_hidden_states)
-        hidden_states = self.layer_norm3(hidden_states + _hidden_states)
-        return hidden_states
         
 class SinusoidalPositionalEmbedding(nn.Module):
     """
-    Class implementing the positional encoding layer. 
+    Class implementing the positional encoding layer.
     This is a simple implementation of the sinusoidal positional encoding from the "Attention is All You Need" paper.
     """
-    def __init__(self, config):
+    def __init__(self, max_position_embeddings, dim):
         super().__init__()
         
-        self.encoding = torch.zeros(config.max_position_embeddings, config.dim)
+        self.encoding = torch.zeros(max_position_embeddings, dim)
         self.encoding.requires_grad = False
         
-        pos = torch.arange(0, config.max_position_embeddings).unsqueeze(1)
-        _2i = torch.arange(0, config.dim, 2)
+        pos = torch.arange(0, max_position_embeddings).unsqueeze(1).float()
+        _2i = torch.arange(0, dim, 2).float()
         
-        self.encoding[:, 0::2] = torch.sin(pos / (10000 ** (_2i / config.dim)))
-        self.encoding[:, 1::2] = torch.cos(pos / (10000 ** (_2i / config.dim)))
-    
-    def forward(self, x):       
-        if x.size(1) > self.encoding.size(0):
-            raise ValueError("Input sequence length is greater than the maximum position embedding length")
-        if x.size(2) != self.encoding.size(1):
-            raise ValueError("Input sequence dimension is different from the position embedding dimension")
-        
-        return x + self.encoding[:x.size(1), :].unsqueeze(0)
+        self.encoding[:, 0::2] = torch.sin(pos / (10000 ** (_2i / dim)))
+        self.encoding[:, 1::2] = torch.cos(pos / (10000 ** (_2i / dim)))
+        self.encoding = self.encoding.unsqueeze(0)  # [1, max_position_embeddings, dim]
+
+    def forward(self, seq_length):
+        return self.encoding[:, :seq_length, :]
 
 class Embeddings(nn.Module):
     def __init__(self, config: Config):
         super().__init__()
         self.word_embeddings = nn.Embedding(config.vocab_size, config.dim, padding_idx=config.pad_token_id)
-        self.position_embeddings = nn.Embedding(config.max_position_embeddings, config.dim) \
-                                   if not config.sinusoidal_pos_embds else SinusoidalPositionalEmbedding(config)
+        
+        if config.sinusoidal_pos_embds:
+            self.position_embeddings = SinusoidalPositionalEmbedding(config.max_position_embeddings, config.dim)
+        else:
+            self.position_embeddings = nn.Embedding(config.max_position_embeddings, config.dim)
         
         self.LayerNorm = nn.LayerNorm(config.dim, eps=1e-12)
         self.dropout = nn.Dropout(config.dropout)
-        self.register_buffer(
-            "position_ids", torch.arange(config.max_position_embeddings).expand((1, -1)), persistent=False
-        )
 
-    def forward(self, input_ids: torch.Tensor, ) -> torch.Tensor:
+    def forward(self, input_ids: torch.Tensor) -> torch.Tensor:
         """
         ### Args:
             - input_ids (torch.Tensor): torch.tensor(bs, max_seq_length) The token ids to embed.
@@ -255,22 +159,16 @@ class Embeddings(nn.Module):
         input_embeds = self.word_embeddings(input_ids)  # [bs, max_seq_length, dim]
         seq_length = input_embeds.size(1)
 
-        if hasattr(self, "position_ids"):
-            position_ids = self.position_ids[:, :seq_length]
+        if isinstance(self.position_embeddings, SinusoidalPositionalEmbedding):
+            position_embeddings = self.position_embeddings(seq_length)  # [1, max_seq_length, dim]
         else:
-            position_ids = torch.arange(seq_length, dtype=torch.long, device=input_ids.device)  # (max_seq_length)
-            position_ids = position_ids.unsqueeze(0).expand_as(input_ids)  # (bs, max_seq_length)
+            position_ids = torch.arange(seq_length, dtype=torch.long, device=input_ids.device).unsqueeze(0)
+            position_embeddings = self.position_embeddings(position_ids)  # [1, max_seq_length, dim]
 
-        position_embeddings = self.position_embeddings(position_ids)  # (bs, max_seq_length, dim)
-
-        embeddings = input_embeds + position_embeddings  # (bs, max_seq_length, dim)
-        embeddings = self.LayerNorm(embeddings)  # (bs, max_seq_length, dim)
-        embeddings = self.dropout(embeddings)  # (bs, max_seq_length, dim)
+        embeddings = input_embeds + position_embeddings  # [bs, max_seq_length, dim]
+        embeddings = self.LayerNorm(embeddings)  # [bs, max_seq_length, dim]
+        embeddings = self.dropout(embeddings)  # [bs, max_seq_length, dim]
         return embeddings
     
-def _generate_attention_mask(self, attention_mask):
-    attention_mask = attention_mask.unsqueeze(1).unsqueeze(2)
-    attention_mask = attention_mask.to(dtype=next(self.parameters()).dtype)
-    attention_mask = (1.0 - attention_mask) * -1e9
-    return attention_mask
+    
         

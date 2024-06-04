@@ -10,6 +10,7 @@ except ImportError:
     from config import Config
     from activations import get_activation
 
+
 class TransformerBlock(nn.Module):
     """
     Transformer block similar to the EncoderLayer but compatible with the DistilBERT 
@@ -23,8 +24,8 @@ class TransformerBlock(nn.Module):
         self.ffn = PositionWiseFeedForward(config)
         self.output_layer_norm = nn.LayerNorm(config.dim, eps=1e-12)
         
-    def forward(self, hidden_states, attention_mask):
-        attention_output = self.attention(hidden_states, hidden_states, hidden_states, attention_mask)
+    def forward(self, hidden_states: torch.Tensor, attention_mask: Optional[torch.Tensor] = None)-> torch.Tensor:
+        attention_output = self.attention(hidden_states, attention_mask) #! HERE
         sa_layer_norm = self.sa_layer_norm(attention_output + hidden_states)
         ffn_output = self.ffn(sa_layer_norm)
         output = self.output_layer_norm(ffn_output + sa_layer_norm)
@@ -54,10 +55,23 @@ class DistilBERTModel(nn.Module):
         super().__init__()
         self.embeddings = Embeddings(config)
         self.transformer = Transformer(config)
+
+    def generate_attention_mask(self, attention_mask):
+        dtype = next(self.parameters()).dtype
+        attention_mask = attention_mask.unsqueeze(1).unsqueeze(2)
+        attention_mask = attention_mask.to(dtype=dtype)
+        attention_mask = (1.0 - attention_mask) * torch.finfo(dtype).min
+        return attention_mask
         
     def forward(self, input_ids, attention_mask=None):
+        
+        if attention_mask is None:
+            extended_attention_mask = None
+        else:
+            extended_attention_mask = self.generate_attention_mask(attention_mask)
+            
         embeddings = self.embeddings(input_ids)
-        hidden_states = self.transformer(embeddings, attention_mask)
+        hidden_states = self.transformer(embeddings, extended_attention_mask)
         return hidden_states
     
 class MyDistilBertForMaskedLM(nn.Module):
@@ -72,20 +86,10 @@ class MyDistilBertForMaskedLM(nn.Module):
         self.vocab_layer_norm = nn.LayerNorm(config.dim, eps=1e-12)
         self.vocab_projector = nn.Linear(config.dim, config.vocab_size, bias=True)
         
-    def generate_attention_mask(self, attention_mask):
-        attention_mask = attention_mask.unsqueeze(1).unsqueeze(2)
-        attention_mask = attention_mask.to(dtype=next(self.parameters()).dtype)
-        attention_mask = (1.0 - attention_mask) * -1e9
-        return attention_mask
     
     def forward(self, input_ids, attention_mask=None):
         
-        if attention_mask is None:
-            extended_attention_mask = None
-        else:
-            extended_attention_mask = self.generate_attention_mask(attention_mask)
-        
-        hidden_states = self.distilbert(input_ids, extended_attention_mask)
+        hidden_states = self.distilbert(input_ids, attention_mask)
         prediction_logits = self.vocab_transform(hidden_states)
         prediction_logits = self.activation(prediction_logits)
         prediction_logits = self.vocab_layer_norm(prediction_logits)
@@ -120,19 +124,10 @@ class MyDistiBertClassification(nn.Module):
         self.classifier = nn.Linear(config.dim,config.num_labels)
         self.dropout = nn.Dropout(config.dropout)
         
-    def _generate_attention_mask(self, attention_mask):
-        attention_mask = attention_mask.unsqueeze(1).unsqueeze(2)
-        attention_mask = attention_mask.to(dtype=next(self.parameters()).dtype)
-        attention_mask = (1.0 - attention_mask) * -1e9
-        return attention_mask
     
     def forward(self, input_ids, attention_mask=None):
-        if attention_mask is None:
-            extended_attention_mask = None
-        else:
-            extended_attention_mask = self._generate_attention_mask(attention_mask)
             
-        hidden_states = self.distilbert(input_ids, extended_attention_mask) #[batch_size, seq_len, dim]
+        hidden_states = self.distilbert(input_ids, attention_mask) #[batch_size, seq_len, dim]
         hidden_states = hidden_states[:, 0] # [batch_size, dim]
         hidden_states = self.pre_classifier(hidden_states)  # [batch_size, dim]
         hidden_states = self.activation(hidden_states)  # [batch_size, dim]
@@ -162,20 +157,10 @@ class MyDistilBertForQuestionAnswering(nn.Module):
         self.distilbert = DistilBERTModel(config)
         self.qa_outputs = nn.Linear(config.dim, 2)
         self.dropout = nn.Dropout(config.dropout)
-
-    def _generate_attention_mask(self, attention_mask):
-        attention_mask = attention_mask.unsqueeze(1).unsqueeze(2)
-        attention_mask = attention_mask.to(dtype=next(self.parameters()).dtype)
-        attention_mask = (1.0 - attention_mask) * -1e9
-        return attention_mask
         
     def forward(self, input_ids, attention_mask=None):
-        if attention_mask is None:
-            extended_attention_mask = None
-        else:
-            extended_attention_mask = self._generate_attention_mask(attention_mask)
-        
-        hidden_states = self.distilbert(input_ids, extended_attention_mask) # [batch_size, seq_len, dim]
+
+        hidden_states = self.distilbert(input_ids, attention_mask) # [batch_size, seq_len, dim]
         hidden_states = self.dropout(hidden_states) # [batch_size, seq_len, dim] NOTE: why dropout here?
         logits = self.qa_outputs(hidden_states) # [batch_size, seq_len, 2]
         start_logits, end_logits = logits.split(1, dim=-1) # [batch_size, seq_len, 1], [batch_size, seq_len, 1]
@@ -191,7 +176,7 @@ class MyDistilBertForQuestionAnswering(nn.Module):
         loss_fct = nn.CrossEntropyLoss()
         start_loss = loss_fct(start_logits, start_positions)
         end_loss = loss_fct(end_logits, end_positions)
-        total_loss = (start_loss + end_loss)
+        total_loss = (start_loss + end_loss) / 2.0
         return total_loss, (start_logits, end_logits)
         
     def validation_step(self, batch):
@@ -203,6 +188,14 @@ class MyDistilBertForQuestionAnswering(nn.Module):
         loss_fct = nn.CrossEntropyLoss()
         start_loss = loss_fct(start_logits, start_positions)
         end_loss = loss_fct(end_logits, end_positions)
-        total_loss = (start_loss + end_loss)
+        total_loss = (start_loss + end_loss) / 2.0 
         return total_loss, (start_logits, end_logits)
+    
+    def _compute_loss(self, logits, positions):
+        one_hot_positions = nn.functional.one_hot(positions, num_classes=logits.size(-1)).float()
+        log_probs = nn.functional.log_softmax(logits, dim=-1)
+        loss = -torch.sum(one_hot_positions * log_probs, dim=-1)
+        loss = loss.mean()
+        return loss
+        
         

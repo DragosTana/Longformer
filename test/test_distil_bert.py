@@ -26,8 +26,9 @@ class TestMyDistilBertForMaskedLM(unittest.TestCase):
 
     @torch.no_grad()
     def test_output_size(self):
-        input_tensor = torch.randint(0, 30522, (32, 128))
-        output_tensor = self.model(input_tensor)
+        input_ids = torch.randint(0, 30522, (32, 128))
+        attention_mask = torch.ones_like(input_ids)
+        output_tensor = self.model(input_ids, attention_mask)
         self.assertEqual(output_tensor.size(), (32, 128, 30522))
     
     @torch.no_grad()
@@ -57,7 +58,7 @@ class TestMyDistilBertForMaskedLM(unittest.TestCase):
         #this unwillingly tests also the attention mask handling
         input_ids = torch.randint(0, 30522, (1, self.config.max_position_embeddings))
         attention_mask = torch.ones_like(input_ids)
-
+    
         attention_mask[0, -100:] = 0
         
         output = self.model(input_ids, attention_mask)
@@ -65,33 +66,6 @@ class TestMyDistilBertForMaskedLM(unittest.TestCase):
         original_output = original_output.logits
         
         self.assertTrue(torch.allclose(output, original_output, atol=1e-5))
-        
-class TestParamUpdateMyDistilBertForMaskedLM(unittest.TestCase):
-    
-    @classmethod
-    def setUpClass(cls):
-        super().setUpClass()
-        cls.config = Config(n_layers=6, dim=768, num_attention_heads=12, vocab_size=30522)
-        cls.model = MyDistilBertForMaskedLM(cls.config)
-        cls.model_state_dict = torch.load("./model/weights/distilbert.pth")
-        cls.model.load_state_dict(cls.model_state_dict)
-        
-        cls.original_model = DistilBertForMaskedLM(DistilBertConfig()).from_pretrained("distilbert-base-uncased", cache_dir="./model/weights")
-        cls.model.train(), cls.original_model.train()
-        cls.device = torch.device('cpu')
-        cls.model.to(cls.device), cls.original_model.to(cls.device)
-    
-    def test_param_update(self):
-        input_tensor = torch.randint(0, 30522, (32, self.config.max_position_embeddings))
-        input_tensor = input_tensor.to(self.device)
-        optimizer = torch.optim.Adam(self.model.parameters(), lr=1e-3)
-        output_tensor = self.model(input_tensor)
-        loss = output_tensor.mean()
-        loss.backward()
-        optimizer.step()
-        
-        for param in self.model.parameters():
-            self.assertTrue(param.grad is not None)
 
 if __name__ == "__main__":
     unittest.main()

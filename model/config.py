@@ -33,7 +33,6 @@ class Config():
         max_position_embeddings: int = 512,
         layer_norm_eps: float = 1e-12,
         pad_token_id: int = 0,
-        attention_window: int = 512,
         dropout: float = 0.1,
         sinusoidal_pos_embds: bool = False,
     ):
@@ -48,7 +47,6 @@ class Config():
         self.max_position_embeddings = max_position_embeddings
         self.layer_norm_eps = layer_norm_eps
         self.pad_token_id = pad_token_id
-        self.attention_window = attention_window
         self.dropout = dropout
         self.sinusoidal_pos_embds = sinusoidal_pos_embds
         
@@ -62,8 +60,13 @@ class ConfigClassification(Config):
         self.num_labels = num_labels
         
 class LongformerConfig(Config):
-    def __init__(self, attention_window: List[int] = None, attention_dilation: List[int] = None,
-                 autoregressive: bool = False, attention_mode: str = 'sliding_chunks', **kwargs):
+    def __init__(
+        self, attention_window: List[int] = None, 
+        attention_dilation: List[int] = None,
+        autoregressive: bool = False, 
+        attention_mode: str = 'sliding_chunks', 
+        **kwargs,
+    ):
         """
         Args:
             attention_window: list of attention window sizes of length = number of layers.
@@ -81,4 +84,13 @@ class LongformerConfig(Config):
         self.attention_dilation = attention_dilation
         self.autoregressive = autoregressive
         self.attention_mode = attention_mode
-        assert self.attention_mode in ['tvm', 'sliding_chunks', 'n2', 'sliding_chunks_no_overlap']
+        assert self.attention_mode in ['sliding_chunks', 'n2', 'sliding_chunks_no_overlap']
+
+class LongformerConfigClassification(LongformerConfig):
+    def __init__(
+        self,
+        num_labels: int = 2,
+        **kwargs,
+    ):
+        super().__init__(**kwargs)
+        self.num_labels = num_labels

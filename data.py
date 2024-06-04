@@ -205,7 +205,7 @@ class SQuAD(Dataset):
         raw_data = load_dataset("squad", cache_dir=self.cache_dir, trust_remote_code=True)
         # remove the columns that are not needed
         raw_data = raw_data.remove_columns(["id", "title"])
-        tokenized_squad = raw_data.map(self._preprocess_data, batched=True, num_proc=self.num_workers, )#remove_columns=["question", "context", "answers"]
+        tokenized_squad = raw_data.map(self._preprocess_data, batched=True, num_proc=self.num_workers, remove_columns=["question", "context", "answers"])
         return tokenized_squad
     
     def split(self):
@@ -221,28 +221,34 @@ class SQuAD(Dataset):
     
 if __name__ == "__main__":
 
-    from tqdm import tqdm
+    #set all seeds for reproducibility
+    torch.manual_seed(42)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
     
     qa = SQuAD(shuffle=True)
     train, val = qa.split()
     
-    print("Answer: ", qa.tokenizer.decode(train[0]["input_ids"][train[0]["start_positions"]:train[0]["end_positions"]]))
-    print("Real Answer: ", train[0]["answers"]["text"])
+    from model.distil_bert import MyDistilBertForQuestionAnswering
+    from model.config import Config
+    from torch.utils.data import DataLoader
+    from transformers import DefaultDataCollator, DistilBertForQuestionAnswering
+    from transformers import DistilBertConfig
+    
+    config = Config(n_layers=6, dim=768, num_attention_heads=12, vocab_size=30522)
+    config_2 = DistilBertConfig(n_layers=6, dim=768, num_attention_heads=12, vocab_size=30522)
+    model = MyDistilBertForQuestionAnswering(config)
+    model_2 = DistilBertForQuestionAnswering(config_2)
+    model_2.load_state_dict(model.state_dict())
+    datacollator = DefaultDataCollator()
+    train_loader = DataLoader(train, batch_size=1, shuffle=True, collate_fn=datacollator)
+    
+    example = next(iter(train_loader))  
+    print("Decoded input_ids: ", qa.tokenizer.decode(example["input_ids"][0]))
+    print("Decoded start_positions: ", example["start_positions"][0])
+    print("Decoded end_positions: ", example["end_positions"][0])
 
-    count = 0
-    for i in tqdm(range(len(train))):
-        real_answer = train[i]["answers"]["text"]
-        answer = qa.tokenizer.decode(train[i]["input_ids"][train[i]["start_positions"]:train[i]["end_positions"]])
-
-        if len(real_answer) != 1:
-            real_answer = real_answer[0]
-            print("More than one answer")
-        real_answer = real_answer[0]
-        
-        real_answer = real_answer.lower()
-        answer = answer.lower()
-        
-        if real_answer != answer:
-            count += 1
-        
-    print("Total mismatch: ", count)
+    loss, _ = model.train_step(example)
+    print("Loss: ", loss)
+    output = model_2(input_ids=example["input_ids"], attention_mask=example["attention_mask"], start_positions=example["start_positions"], end_positions=example["end_positions"])
+    print("Loss: ", output.loss)

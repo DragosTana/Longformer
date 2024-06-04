@@ -2,14 +2,15 @@ from torch import nn
 try:
     from sliding_chunks import  sliding_chunks_matmul_qk, sliding_chunks_matmul_pv, \
                                 sliding_chunks_no_overlap_matmul_qk, sliding_chunks_no_overlap_matmul_pv, \
-                                mask_invalid_locations
+                                mask_invalid_locations, pad_to_window_size
 except:
     from .sliding_chunks import  sliding_chunks_matmul_qk, sliding_chunks_matmul_pv, \
                                 sliding_chunks_no_overlap_matmul_qk, sliding_chunks_no_overlap_matmul_pv, \
-                                mask_invalid_locations
+                                mask_invalid_locations, pad_to_window_size
 import math
 import torch
 import torch.nn.functional as F
+from transformers import RobertaForCausalLM
 
 class LongformerSelfAttention(nn.Module):
     def __init__(self, config, layer_id):
@@ -59,12 +60,13 @@ class LongformerSelfAttention(nn.Module):
               0: local attention
             +ve: global attention
         '''
+        
         assert encoder_hidden_states is None, "`encoder_hidden_states` is not supported and should be None"
         assert encoder_attention_mask is None, "`encoder_attention_mask` is not supported and shiould be None"
 
         if attention_mask is not None:
-            attention_mask = attention_mask.squeeze(dim=2).squeeze(dim=1)
-            key_padding_mask = attention_mask < 0
+            attention_mask = attention_mask.squeeze(dim=2).squeeze(dim=1) #returns a tensor with all specified dimensions of input of size 1 removed
+            key_padding_mask = attention_mask < 0  #
             extra_attention_mask = attention_mask > 0
             remove_from_windowed_attention_mask = attention_mask != 0
 
@@ -91,16 +93,16 @@ class LongformerSelfAttention(nn.Module):
             extra_attention_mask = None
             key_padding_mask = None
 
-        hidden_states = hidden_states.transpose(0, 1)
+        hidden_states = hidden_states.transpose(0, 1) #[seq_len, bsz, dim]
         seq_len, bsz, embed_dim = hidden_states.size()
         assert embed_dim == self.embed_dim
-        q = self.query(hidden_states)
-        k = self.key(hidden_states)
-        v = self.value(hidden_states)
+        q = self.query(hidden_states)   #[seq_len, bsz, dim]
+        k = self.key(hidden_states)     #[seq_len, bsz, dim]
+        v = self.value(hidden_states)   #[seq_len, bsz, dim]
         q /= math.sqrt(self.head_dim)
 
-        q = q.view(seq_len, bsz, self.num_heads, self.head_dim).transpose(0, 1)
-        k = k.view(seq_len, bsz, self.num_heads, self.head_dim).transpose(0, 1)
+        q = q.view(seq_len, bsz, self.num_heads, self.head_dim).transpose(0, 1) #[bsz, seq_len, num_heads, head_dim]
+        k = k.view(seq_len, bsz, self.num_heads, self.head_dim).transpose(0, 1) #[bsz, seq_len, num_heads, head_dim]
         # attn_weights = (bsz, seq_len, num_heads, window*2+1)
 
         if self.attention_mode == "sliding_chunks":
@@ -109,7 +111,8 @@ class LongformerSelfAttention(nn.Module):
             attn_weights = sliding_chunks_no_overlap_matmul_qk(q, k, self.attention_window, padding_value=0)
         else:
             raise False
-        mask_invalid_locations(attn_weights, self.attention_window, self.attention_dilation, False)
+        
+        mask_invalid_locations(attn_weights, self.attention_window, self.attention_dilation)
         if remove_from_windowed_attention_mask is not None:
             # This implementation is fast and takes very little memory because num_heads x dim = 1
             # from (bsz x seq_len) to (bsz x seq_len x num_heads x dim)
@@ -139,13 +142,18 @@ class LongformerSelfAttention(nn.Module):
             # concat to attn_weights
             # (bsz, seq_len, num_heads, extra attention count + 2*window+1)
             attn_weights = torch.cat((selected_attn_weights, attn_weights), dim=-1)
+            
         attn_weights_float = F.softmax(attn_weights, dim=-1, dtype=torch.float32)  # use fp32 for numerical stability
+        
         if key_padding_mask is not None:
             # softmax sometimes inserts NaN if all positions are masked, replace them with 0
             attn_weights_float = torch.masked_fill(attn_weights_float, key_padding_mask.unsqueeze(-1).unsqueeze(-1), 0.0)
+            
         attn_weights = attn_weights_float.type_as(attn_weights)
         attn_probs = F.dropout(attn_weights_float.type_as(attn_weights), p=self.dropout, training=self.training)
+        
         v = v.view(seq_len, bsz, self.num_heads, self.head_dim).transpose(0, 1)
+        
         attn = 0
         if extra_attention_mask is not None:
             selected_attn_probs = attn_probs.narrow(-1, 0, max_num_extra_indices_per_batch)
@@ -217,4 +225,16 @@ class LongformerSelfAttention(nn.Module):
                 # which is the attention weights of every token attending to its neighbours
                 attn_weights = attn_weights.permute(0, 2, 1, 3)
         outputs = (context_layer, attn_weights) if output_attentions else (context_layer,)
-        return outputs
+        return outputs[0] # context_layer
+    
+if __name__ == "__main__":
+    from config import LongformerConfig
+    config = LongformerConfig(attention_window=[8]*6, attention_dilation=[1]*6, autoregressive=False, attention_mode='sliding_chunks')
+    attention = LongformerSelfAttention(config, 0)
+    hidden_states = torch.randn(1, 512, 768)
+    attention_mask = torch.ones(hidden_states.shape, dtype=torch.long)
+    input_ids, attention_mask = pad_to_window_size(hidden_states, attention_mask, config.attention_window[0], config.pad_token_id)
+    outputs = attention(hidden_states, attention_mask)
+    print(outputs[0].shape)
+    print(outputs[1].shape if len(outputs) > 1 else "No attention weights returned")
+    print("Success!")
