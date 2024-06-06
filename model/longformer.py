@@ -2,10 +2,14 @@
 try:
     from distil_bert import DistilBERTModel, MyDistilBertForMaskedLM, MyDistiBertClassification
     from longformer_attention import LongformerSelfAttention
+    from sliding_chunks import pad_to_window_size
+    
 except ImportError:
     from .distil_bert import DistilBERTModel, MyDistilBertForMaskedLM, MyDistiBertClassification
     from .longformer_attention import LongformerSelfAttention
+    from .sliding_chunks import pad_to_window_size
     
+import torch.nn as nn 
     
 class Longformer(DistilBERTModel):
     def __init__(self, config):
@@ -45,7 +49,7 @@ class LongformerForMaskedLM(MyDistilBertForMaskedLM):
         else:
             for i, layer in enumerate(self.distilbert.transformer.layer):
                 layer.attention = LongformerSelfAttention(config, layer_id=i)
-                
+     
                 
 class LongformerForClassification(MyDistiBertClassification):
     def __init__(self, config):

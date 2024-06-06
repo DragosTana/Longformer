@@ -10,7 +10,6 @@ except:
 import math
 import torch
 import torch.nn.functional as F
-from transformers import RobertaForCausalLM
 
 class LongformerSelfAttention(nn.Module):
     def __init__(self, config, layer_id):
@@ -225,7 +224,7 @@ class LongformerSelfAttention(nn.Module):
                 # which is the attention weights of every token attending to its neighbours
                 attn_weights = attn_weights.permute(0, 2, 1, 3)
         outputs = (context_layer, attn_weights) if output_attentions else (context_layer,)
-        return outputs[0] # context_layer
+        return context_layer
     
 if __name__ == "__main__":
     from config import LongformerConfig

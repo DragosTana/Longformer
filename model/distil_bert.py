@@ -88,7 +88,6 @@ class MyDistilBertForMaskedLM(nn.Module):
         
     
     def forward(self, input_ids, attention_mask=None):
-        
         hidden_states = self.distilbert(input_ids, attention_mask)
         prediction_logits = self.vocab_transform(hidden_states)
         prediction_logits = self.activation(prediction_logits)
@@ -140,7 +139,7 @@ class MyDistiBertClassification(nn.Module):
         attention_mask = batch['attention_mask']
         labels = batch['labels']
         outputs = self(input_ids, attention_mask)
-        loss = nn.CrossEntropyLoss()(outputs, labels)
+        loss = nn.CrossEntropyLoss(ignore_index=-100)(outputs, labels)
         return loss, outputs
     
     def validation_step(self, batch):
@@ -148,7 +147,7 @@ class MyDistiBertClassification(nn.Module):
         attention_mask = batch['attention_mask']
         labels = batch['labels']
         outputs = self(input_ids, attention_mask)
-        loss = nn.CrossEntropyLoss()(outputs, labels)
+        loss = nn.CrossEntropyLoss(ignore_index=-100)(outputs, labels)
         return loss, outputs
     
 class MyDistilBertForQuestionAnswering(nn.Module):

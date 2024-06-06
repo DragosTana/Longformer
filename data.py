@@ -14,7 +14,7 @@ class WikiDataset(Dataset):
                  num_workers: int = 16,
                  cache_dir: str = "./data", 
                  shuffle: bool = False,
-                 n_docs: int = 10000,
+                 n_docs: int = None,
                 ): 
         self.tokenizer_name = tokenizer_name
         self.max_seq_len = max_seq_len
@@ -70,8 +70,9 @@ class WikiDataset(Dataset):
         text_data = raw_data.remove_columns(['id', 'url', 'title',])
         text_data.shuffle() if self.shuffle else None
         #NOTE: Remove this line to load the entire dataset
-        text_data = text_data.select(range(self.n_docs)) 
-        text_data = text_data.map(self._process_data, batched=True, num_proc=self.num_workers, remove_columns=text_data.column_names, fn_kwargs={"tokenizer": self.tokenizer})
+        if self.n_docs is not None:
+            text_data = text_data.select(range(self.n_docs)) 
+        text_data = text_data.map(self._process_data, batched=True, num_proc=self.num_workers, remove_columns=text_data.column_names)
         dataset = text_data.map(self._group_texts, batched=True, num_proc=self.num_workers, remove_columns=text_data.column_names, fn_kwargs={"max_seq_len": self.max_seq_len, "pad_token_id": self.tokenizer.pad_token_id})
 
         return dataset

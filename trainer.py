@@ -7,6 +7,7 @@ from tqdm import tqdm
 from typing import Optional, Callable, List, Dict, Any, Union
 from torch.cuda.amp import GradScaler, autocast
 
+
 class Trainer:
     """
     A class to handle the training of PyTorch models.
@@ -23,7 +24,7 @@ class Trainer:
                  log: bool = False,
                  max_epochs: int = 500,
                  gradient_accumulation_steps: int = 1,
-                 max_grad_norm : float = None,
+                 max_grad_norm: Optional[float] = None,
                  use_mixed_precision: bool = False,
                  project_name: str = "my-awesome-project"):
         """
@@ -69,11 +70,19 @@ class Trainer:
 
         if self.log:
             self.logger = self._initialize_logger(logger)
-        else:    
+        else:
             self.logger = None
 
-
     def _initialize_logger(self, logger: str):
+        """
+        Initialize the logger.
+
+        Args:
+            logger (str): The logger to use ('wandb' or 'tensorboard').
+
+        Returns:
+            Logger object.
+        """
         if logger == "wandb":
             try:
                 wandb.init(
@@ -93,11 +102,18 @@ class Trainer:
             raise NotImplementedError("Tensorboard logging is not implemented yet.")
         return None
 
-
     def _continue_training(self, model: nn.Module, optimizer: torch.optim.Optimizer,
                            scheduler: Optional[torch.optim.lr_scheduler._LRScheduler] = None) -> Union[nn.Module, torch.optim.Optimizer, Optional[torch.optim.lr_scheduler._LRScheduler]]:
         """
         Loads the trained model, optimizer, and scheduler from the checkpoint.
+
+        Args:
+            model (nn.Module): The model to load the state dict into.
+            optimizer (torch.optim.Optimizer): The optimizer to load the state dict into.
+            scheduler (torch.optim.lr_scheduler._LRScheduler, optional): The scheduler to load the state dict into.
+
+        Returns:
+            model, optimizer, scheduler with loaded state dicts.
         """
         model_name = model.__class__.__name__
         checkpoint_path = os.path.join(self.default_root_dir, 'weights', f'{model_name}_*.model')
@@ -114,11 +130,16 @@ class Trainer:
             print(f"No checkpoint found at {checkpoint_path}")
             return model, optimizer, None, scheduler
 
-
     def _save_checkpoint(self, model: nn.Module, optimizer: torch.optim.Optimizer, epoch: int,
                          scheduler: Optional[torch.optim.lr_scheduler._LRScheduler] = None):
         """
         Saves the model, optimizer, and scheduler to the checkpoint if metrics are better.
+
+        Args:
+            model (nn.Module): The model to save.
+            optimizer (torch.optim.Optimizer): The optimizer to save.
+            epoch (int): The current epoch number.
+            scheduler (torch.optim.lr_scheduler._LRScheduler, optional): The scheduler to save.
         """
         if not self._has_validation:
             # If no validation set is provided save only the last model
@@ -143,22 +164,35 @@ class Trainer:
             os.makedirs(os.path.join(self.default_root_dir, 'weights'), exist_ok=True)
             torch.save(checkpoint, os.path.join(self.default_root_dir, 'weights', f'{model_name}_{epoch}.model'))
 
-
     def _train_one_epoch(self, model, dataloader):
+        """
+        Trains the model for one epoch.
+    
+        Args:
+            model (nn.Module): The model to train.
+            dataloader (torch.utils.data.DataLoader): The dataloader for the training data.
+    
+        Returns:
+            float: The average training loss for the epoch.
+        """
         model.train()
         training_loss = 0.0
+        accumulated_loss = 0.0
+    
         with tqdm(enumerate(dataloader), total=len(dataloader)) as pbar:
             for i, data in pbar:
                 data = {key: value.to(self.device) for key, value in data.items()}
-                self.optimizer.zero_grad()
                 with autocast(enabled=self.use_mixed_precision, dtype=torch.float16):
                     loss, _ = model.train_step(data)
-                    loss = loss / self.gradient_accumulation_steps
+                    loss = loss / self.gradient_accumulation_steps  # Scale loss
+    
                 if self.use_mixed_precision:
                     self.scaler.scale(loss).backward()
                 else:
                     loss.backward()
-                training_loss += loss.item()
+    
+                accumulated_loss += loss.item() * self.gradient_accumulation_steps  # Accumulate the scaled loss
+    
                 if (i + 1) % self.gradient_accumulation_steps == 0:
                     if self.use_mixed_precision:
                         self.scaler.unscale_(self.optimizer)
@@ -171,17 +205,33 @@ class Trainer:
                             nn_utils.clip_grad_norm_(model.parameters(), self.max_grad_norm)
                         self.optimizer.step()
                     self.optimizer.zero_grad()
-                pbar.set_postfix({'Training Loss': training_loss / (i + 1)})
+    
+                if self.scheduler:
+                    self.scheduler.step()  # Step the scheduler at each batch iteration
+    
+                pbar.set_postfix({'Training Loss': accumulated_loss / (i + 1)})
                 if self.log:
-                    self._log_metrics({"Batch Loss": training_loss / (i + 1)})
-        return training_loss / len(dataloader)
-
-
+                    self._log_metrics({"Batch Loss": accumulated_loss / (i + 1)})
+    
+            training_loss = accumulated_loss / len(dataloader)
+    
+        return training_loss
+    
     def _validate_one_epoch(self, model, dataloader):
+        """
+        Validates the model for one epoch.
+    
+        Args:
+            model (nn.Module): The model to validate.
+            dataloader (torch.utils.data.DataLoader): The dataloader for the validation data.
+    
+        Returns:
+            float: The average validation loss for the epoch.
+        """
         model.eval()
         val_loss = 0.0
         aggregated_metrics = {}
-
+    
         with torch.no_grad():
             with tqdm(dataloader, total=len(dataloader)) as pbar:
                 for data in pbar:
@@ -190,36 +240,41 @@ class Trainer:
                         loss, outputs = model.validation_step(data)
                     val_loss += loss.item()
                     batch_metrics = self.compute_metrics(data, outputs) if self.compute_metrics else {}
-
+    
                     for metric_name, metric_value in batch_metrics.items():
                         if metric_name not in aggregated_metrics:
                             aggregated_metrics[metric_name] = metric_value
                         else:
                             aggregated_metrics[metric_name] += metric_value
-
+    
         num_batches = len(dataloader)
         for metric_name in aggregated_metrics:
             aggregated_metrics[metric_name] /= num_batches
-
+    
         self.metrics["val_loss"] = val_loss / num_batches
         self.metrics.update(aggregated_metrics)
-
+    
         return self.metrics["val_loss"]
 
-
     def _log_metrics(self, metrics: Dict[str, float]):
+        """
+        Logs the metrics using the specified logger.
+
+        Args:
+            metrics (Dict[str, float]): The metrics to log.
+        """
         if self.logger:
             self.logger.log(metrics)
-
 
     def fit(self, model: nn.Module, train_dataloaders: List[torch.utils.data.DataLoader],
             val_dataloaders: Optional[List[torch.utils.data.DataLoader]] = None):
         """
         Runs the full optimization routine.
-        ### Arguments:
-        - model: A PyTorch model.
-        - train_dataloaders: A list of PyTorch dataloaders for training.
-        - val_dataloaders: A list of PyTorch dataloaders for validation.
+
+        Args:
+            model (nn.Module): The model to train.
+            train_dataloaders (List[torch.utils.data.DataLoader]): A list of PyTorch dataloaders for training.
+            val_dataloaders (List[torch.utils.data.DataLoader], optional): A list of PyTorch dataloaders for validation.
         """
         if val_dataloaders:
             self._has_validation = True
