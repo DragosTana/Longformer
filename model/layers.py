@@ -87,7 +87,7 @@ class MultiHeadAttention(nn.Module):
         key = self.transpose_for_scores(key)
         value = self.transpose_for_scores(value)
 
-        attention_scores = torch.matmul(query, key.transpose(-1, -2)) / (self.attention_head_size ** 0.5)
+        attention_scores = torch.matmul(query, key.transpose(-1, -2)) / (self.attention_head_size ** 0.5) #[batch_size, num_attention_heads, sequence_length, sequence_length]
         attention_scores = attention_scores + mask if mask is not None else attention_scores
         attention_probs = torch.nn.functional.softmax(attention_scores, dim=-1)
 

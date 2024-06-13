@@ -1,8 +1,11 @@
 from torch.utils.data import Dataset
-from transformers import AutoTokenizer
+from transformers import AutoTokenizer, LongformerForMaskedLM
 from datasets import load_dataset
+from sklearn.model_selection import train_test_split
 import torch
 from copy import copy
+import re
+import tqdm
 
 class WikiDataset(Dataset):
     """
@@ -49,6 +52,7 @@ class WikiDataset(Dataset):
         # Concatenate all texts.
         concatenated_examples = {k: sum(examples[k], []) for k in examples.keys()}
         total_length = len(concatenated_examples[list(examples.keys())[0]])
+        padding_length = 0
         # Pad the sequences to ensure uniform length.
         remainder = total_length % max_seq_len
         if remainder != 0:
@@ -56,13 +60,14 @@ class WikiDataset(Dataset):
             for k, t in concatenated_examples.items():
                 concatenated_examples[k] = t + [pad_token_id] * padding_length
             total_length += padding_length
-        concatenated_examples["attention_mask"][-padding_length:] = [0] * padding_length
+            concatenated_examples["attention_mask"][-padding_length:] = [0] * padding_length
         # Split by chunks of max_seq_len.
         result = {
             k: [t[i : i + max_seq_len] for i in range(0, total_length, max_seq_len)]
             for k, t in concatenated_examples.items()
         }
         return result
+
     
     def _raw_text_to_tokens(self): 
         print("Loading wikipedia dataset...")
@@ -84,24 +89,34 @@ class IMDB(Dataset):
              num_workers: int = 16,
              cache_dir: str = "./data", 
              shuffle: bool = False,
+             longformer: bool = False,
              ): 
         self.tokenizer_name = tokenizer_name
         self.max_seq_len = max_seq_len
         self.num_workers = num_workers
         self.cache_dir = cache_dir
         self.shuffle = shuffle
+        self.longformer = longformer
         
         self.tokenizer = AutoTokenizer.from_pretrained(self.tokenizer_name, use_fast=True, return_tensors="pt")
         self.data = self._raw_text_to_tokens()
         print("IMDB dataset loaded and tokenized!")
         
     def _preprocess_data(self, examples):
-        return self.tokenizer(examples["text"], truncation=True, padding="max_length", max_length=self.max_seq_len)
+        tokenized_data = self.tokenizer(examples["text"], truncation=True, padding="max_length", max_length=self.max_seq_len)
+        
+        if self.longformer:
+            attention_mask = torch.tensor(tokenized_data["attention_mask"])
+            attention_mask[:, 0] = 2
+            tokenized_data["attention_mask"] = attention_mask.tolist()
+            
+        return tokenized_data
     
     def _raw_text_to_tokens(self):
         print("Loading IMDB dataset...")
         raw_data = load_dataset("imdb", cache_dir=self.cache_dir, trust_remote_code=True)
         tokenized_imdb = raw_data.map(self._preprocess_data, batched=True, num_proc=self.num_workers, remove_columns=["text"])
+        
         return tokenized_imdb
     
     def split(self):
@@ -112,10 +127,65 @@ class IMDB(Dataset):
     
     def __getitem__(self, idx):
         return self.data[idx]
+    
+class Hyperpartisan(Dataset):
+    def __init__(self,
+                 tokenizer_name: str = "distilbert-base-uncased",
+                 max_seq_len: int = 512,
+                 num_workers: int = 16,
+                 cache_dir: str = "./data", 
+                 shuffle: bool = False,
+                ): 
+        """
+        Initializes the Hyperpartisan dataset.
+
+        Args:
+            tokenizer_name (str): Name of the tokenizer.
+            max_seq_len (int): Maximum sequence length for tokenization.
+            num_workers (int): Number of workers for data processing.
+            cache_dir (str): Directory to cache the dataset.
+            shuffle (bool): Whether to shuffle the dataset.
+        """
+        self.tokenizer_name = tokenizer_name
+        self.max_seq_len = max_seq_len
+        self.num_workers = num_workers
+        self.cache_dir = cache_dir
+        self.shuffle = shuffle
+        
+        self.tokenizer = AutoTokenizer.from_pretrained(self.tokenizer_name, use_fast=True, return_tensors="pt")
+        self.data = self._raw_text_to_tokens()
+        print("Hyperpartisan dataset loaded and tokenized!")
+    
+    @staticmethod
+    def clean_text(text):
+        cleaned_text = re.sub(r'<.*?>', '', text)
+        cleaned_text = re.sub(r'[^\w\s]', '', cleaned_text)
+        cleaned_text = re.sub(r'\s+', ' ', cleaned_text).strip()
+        return cleaned_text
+        
+    def _preprocess_data(self, examples):
+        examples["text"] = [self.clean_text(text) for text in examples["text"]]
+        tokenized_examples = self.tokenizer(examples["text"], truncation=True, padding="max_length", max_length=self.max_seq_len)
+        tokenized_examples["labels"] = examples["hyperpartisan"]
+        return tokenized_examples
+    
+    def _raw_text_to_tokens(self):
+        print("Loading Hyperpartisan News Detection dataset...")
+        raw_data = load_dataset("SemEvalWorkshop/hyperpartisan_news_detection", "bypublisher", cache_dir=self.cache_dir, trust_remote_code=True)
+        raw_data = raw_data.remove_columns(['title', 'url', 'published_at', 'bias'])
+        tokenized_data = raw_data.map(self._preprocess_data, batched=True, num_proc=self.num_workers, remove_columns=["text", "hyperpartisan"])
+        
+        return tokenized_data["train"]
+        
+    def __len__(self):
+        return len(self.data)
+    
+    def __getitem__(self, idx):
+        return self.data[idx]
 
 class SQuAD(Dataset):
     """
-    SQuAD dataset for question answering. Loads the SQuAD dataset from hugginface, tokenizes and preprocesses the data
+    SQuAD dataset for question answering. Loads the SQuAD dataset from Huggingface, tokenizes and preprocesses the data
     to make the input suitable for the model. Please reference the following link https://huggingface.co/datasets/rajpurkar/squad
     for more information about the dataset structure.
     
@@ -127,15 +197,14 @@ class SQuAD(Dataset):
     
     The input_ids is formatted as follows:
     [CLS] question [SEP] context [SEP]
-    
     """
+    
     def __init__(self,
-             tokenizer_name: str = "distilbert-base-uncased",
-             max_seq_len: int = 512,
-             num_workers: int = 16,
-             cache_dir: str = "./data", 
-             shuffle: bool = False,
-             ): 
+                 tokenizer_name: str = "distilbert-base-uncased",
+                 max_seq_len: int = 512,
+                 num_workers: int = 16,
+                 cache_dir: str = "./data", 
+                 shuffle: bool = False):
         self.tokenizer_name = tokenizer_name
         self.max_seq_len = max_seq_len
         self.num_workers = num_workers
@@ -150,7 +219,7 @@ class SQuAD(Dataset):
         questions = examples["question"]
         contexts = examples["context"]
         answers = examples["answers"]
-        
+
         inputs = self.tokenizer(
             questions,
             contexts,
@@ -164,21 +233,22 @@ class SQuAD(Dataset):
 
         start_positions = []
         end_positions = []
+    
 
         for i, offset in enumerate(offset_mapping):
             answer = answers[i]
             start_char = answer["answer_start"][0]
-            end_char = answer["answer_start"][0] + len(answer["text"][0]) + 1
+            end_char = answer["answer_start"][0] + len(answer["text"][0])
             sequence_ids = inputs.sequence_ids(i)
 
             # Find the start and end of the context
-            idx = 0
-            while sequence_ids[idx] != 1:
-                idx += 1
-            context_start = idx
-            while sequence_ids[idx] == 1:
-                idx += 1
-            context_end = idx - 1
+            context_start = 0
+            while sequence_ids[context_start] != 1:
+                context_start += 1
+            context_end = context_start
+            while context_end < len(sequence_ids) and sequence_ids[context_end] == 1:
+                context_end += 1
+            context_end -= 1
 
             # If the answer is not fully inside the context, label it (0, 0)
             if offset[context_start][0] > end_char or offset[context_end][1] < start_char:
@@ -204,7 +274,7 @@ class SQuAD(Dataset):
     def _raw_text_to_tokens(self):
         print("Loading SQuAD dataset...")
         raw_data = load_dataset("squad", cache_dir=self.cache_dir, trust_remote_code=True)
-        # remove the columns that are not needed
+        # Remove the columns that are not needed
         raw_data = raw_data.remove_columns(["id", "title"])
         tokenized_squad = raw_data.map(self._preprocess_data, batched=True, num_proc=self.num_workers, remove_columns=["question", "context", "answers"])
         return tokenized_squad
@@ -215,41 +285,51 @@ class SQuAD(Dataset):
         return train, val
     
     def __len__(self):
-        return len(self.data)
+        return len(self.data["train"]) + len(self.data["validation"])
     
     def __getitem__(self, idx):
-        return self.data[idx]
+        if idx < len(self.data["train"]):
+            return self.data["train"][idx]
+        else:
+            return self.data["validation"][idx - len(self.data["train"])]
     
+    
+def compare_answers(preprocessed_data, raw_data):
+    for i in tqdm.tqdm(range(len(preprocessed_data))):
+        preprocessed_answer = preprocessed_data[i]
+        raw_answer = raw_data[i]
+        
+        preprocessed_text = raw_answer['context'][preprocessed_answer['start_positions']:preprocessed_answer['end_positions']]
+        raw_text = raw_answer['answers']['text'][0]
+        
+        if preprocessed_text != raw_text:
+            print("----------------------------------------------")
+            print(f"Preprocessed answer: {preprocessed_text}")
+            print(f"Raw answer: {raw_text}")
+            print(f"Start position: {preprocessed_answer['start_positions']}")
+            print(f"End position: {preprocessed_answer['end_positions']}")
+            print(f"Real start position: {raw_answer['answers']['answer_start']}")
+            print(f"Real end position: {raw_answer['answers']['answer_start'][0] + len(raw_text)}")
+            
 if __name__ == "__main__":
-
-    #set all seeds for reproducibility
-    torch.manual_seed(42)
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
+ 
+    #hyperpartisan = Hyperpartisan(num_workers=32, shuffle=True)
+    #raw_data = load_dataset("SemEvalWorkshop/hyperpartisan_news_detection", "bypublisher", cache_dir="./data", trust_remote_code=True)
+    #example = next(iter(hyperpartisan))
+    #
+    #
+    #uprocessed_data = raw_data["train"][0]
+    #print("Raw text: ", uprocessed_data["text"])
+    #print("Decoded input_ids: ", hyperpartisan.tokenizer.decode(example["input_ids"]))
+    #print("Label: ", example["labels"])
+    from transformers import DataCollatorWithPadding
     
-    qa = SQuAD(shuffle=True)
-    train, val = qa.split()
+    dataset = IMDB(num_workers=16, shuffle=True, longformer=True)
+    train, test = dataset.split()
+    datacollator = DataCollatorWithPadding(tokenizer=dataset.tokenizer)
+    trainloader = torch.utils.data.DataLoader(train, batch_size=8, shuffle=True, collate_fn=datacollator)   
+    example = next(iter(trainloader))
+    print("Input_ids: ", example["input_ids"])
+    print("Attention mask: ", example["attention_mask"])
     
-    from model.distil_bert import MyDistilBertForQuestionAnswering
-    from model.config import Config
-    from torch.utils.data import DataLoader
-    from transformers import DefaultDataCollator, DistilBertForQuestionAnswering
-    from transformers import DistilBertConfig
     
-    config = Config(n_layers=6, dim=768, num_attention_heads=12, vocab_size=30522)
-    config_2 = DistilBertConfig(n_layers=6, dim=768, num_attention_heads=12, vocab_size=30522)
-    model = MyDistilBertForQuestionAnswering(config)
-    model_2 = DistilBertForQuestionAnswering(config_2)
-    model_2.load_state_dict(model.state_dict())
-    datacollator = DefaultDataCollator()
-    train_loader = DataLoader(train, batch_size=1, shuffle=True, collate_fn=datacollator)
-    
-    example = next(iter(train_loader))  
-    print("Decoded input_ids: ", qa.tokenizer.decode(example["input_ids"][0]))
-    print("Decoded start_positions: ", example["start_positions"][0])
-    print("Decoded end_positions: ", example["end_positions"][0])
-
-    loss, _ = model.train_step(example)
-    print("Loss: ", loss)
-    output = model_2(input_ids=example["input_ids"], attention_mask=example["attention_mask"], start_positions=example["start_positions"], end_positions=example["end_positions"])
-    print("Loss: ", output.loss)

@@ -211,7 +211,7 @@ class Trainer:
     
                 pbar.set_postfix({'Training Loss': accumulated_loss / (i + 1)})
                 if self.log:
-                    self._log_metrics({"Batch Loss": accumulated_loss / (i + 1)})
+                    self._log_metrics({"Batch Loss": accumulated_loss / (i + 1), "learning_rate": self.optimizer.param_groups[0]['lr']})
     
             training_loss = accumulated_loss / len(dataloader)
     

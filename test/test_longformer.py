@@ -38,11 +38,11 @@ class TestLongformer(unittest.TestCase):
         
     def test_output_size_longformer(self):
         model = Longformer(self.config).to(self.device)
-        input_tensor = torch.randint(0, 30522, (2, self.config.max_position_embeddings)).to(self.device)
+        input_tensor = torch.randint(0, 30522, (1, self.config.max_position_embeddings)).to(self.device)
         attention_mask = torch.ones(input_tensor.shape, dtype=torch.long).to(self.device)
         input_tensor, new_attention_mask = pad_to_window_size(input_tensor, attention_mask, self.config.attention_window[0], self.config.pad_token_id)
         output_tensor = model(input_tensor, new_attention_mask)
-        self.assertEqual(output_tensor.size(), (2, self.config.max_position_embeddings, 768))
+        self.assertEqual(output_tensor.size(), (1, self.config.max_position_embeddings, 768))
         
         
     def test_output_size_longformer_for_masked_lm(self):

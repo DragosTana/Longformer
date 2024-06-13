@@ -9,7 +9,7 @@ from data import WikiDataset
 import collections
 from transformers import get_linear_schedule_with_warmup
     
-dataset = WikiDataset(tokenizer_name="distilbert-base-uncased", max_seq_len=2048, num_workers=16, cache_dir="./data", shuffle=True, n_docs=10000)
+dataset = WikiDataset(tokenizer_name="distilbert-base-uncased", max_seq_len=2048, num_workers=16, cache_dir="./data", shuffle=True, n_docs=100)
 train, test = dataset.split()
 datacollator = DataCollatorForLanguageModeling(tokenizer=dataset.tokenizer, mlm=True, mlm_probability=0.15)
 train_loader = DataLoader(train, batch_size=2, shuffle=True, collate_fn=datacollator)
@@ -50,7 +50,7 @@ for k, v in distil_bert_state_dict.items():
         new_state_dict[k] = v
 model.load_state_dict(new_state_dict, strict=False)
 
-optimizer = torch.optim.AdamW(model.parameters(), lr=2e-5, weight_decay=0.01)
+optimizer = torch.optim.AdamW(model.parameters(), lr=5e-6, weight_decay=0.01)
 scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=250, num_training_steps=10000)
 
 trainer = Trainer(

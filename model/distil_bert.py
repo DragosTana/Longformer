@@ -41,7 +41,7 @@ class Transformer(nn.Module):
        self.layer = nn.ModuleList([TransformerBlock(config) for _ in range(self.n_layers)])
        
     def forward(self, hidden_states: torch.Tensor, attention_mask: Optional[torch.Tensor] = None)-> torch.Tensor:
-        
+  
         for layer in self.layer:
             hidden_states = layer(hidden_states, attention_mask)
             
@@ -55,21 +55,24 @@ class DistilBERTModel(nn.Module):
         super().__init__()
         self.embeddings = Embeddings(config)
         self.transformer = Transformer(config)
-
+        
     def generate_attention_mask(self, attention_mask):
         dtype = next(self.parameters()).dtype
         attention_mask = attention_mask.unsqueeze(1).unsqueeze(2)
         attention_mask = attention_mask.to(dtype=dtype)
         attention_mask = (1.0 - attention_mask) * torch.finfo(dtype).min
         return attention_mask
-        
+    
     def forward(self, input_ids, attention_mask=None):
-        
+    
         if attention_mask is None:
             extended_attention_mask = None
         else:
-            extended_attention_mask = self.generate_attention_mask(attention_mask)
-            
+            if len(attention_mask.size()) == 2:
+                extended_attention_mask = self.generate_attention_mask(attention_mask)
+            else:
+                extended_attention_mask = attention_mask
+        
         embeddings = self.embeddings(input_ids)
         hidden_states = self.transformer(embeddings, extended_attention_mask)
         return hidden_states
@@ -86,9 +89,21 @@ class MyDistilBertForMaskedLM(nn.Module):
         self.vocab_layer_norm = nn.LayerNorm(config.dim, eps=1e-12)
         self.vocab_projector = nn.Linear(config.dim, config.vocab_size, bias=True)
         
+    def generate_attention_mask(self, attention_mask):
+        dtype = next(self.parameters()).dtype
+        attention_mask = attention_mask.unsqueeze(1).unsqueeze(2)
+        attention_mask = attention_mask.to(dtype=dtype)
+        attention_mask = (1.0 - attention_mask) * torch.finfo(dtype).min
+        return attention_mask
     
     def forward(self, input_ids, attention_mask=None):
-        hidden_states = self.distilbert(input_ids, attention_mask)
+            
+        if attention_mask is None:
+            extended_attention_mask = None
+        else:
+            extended_attention_mask = self.generate_attention_mask(attention_mask)
+            
+        hidden_states = self.distilbert(input_ids, extended_attention_mask)
         prediction_logits = self.vocab_transform(hidden_states)
         prediction_logits = self.activation(prediction_logits)
         prediction_logits = self.vocab_layer_norm(prediction_logits)
@@ -122,11 +137,22 @@ class MyDistiBertClassification(nn.Module):
         self.pre_classifier = nn.Linear(config.dim, config.dim)
         self.classifier = nn.Linear(config.dim,config.num_labels)
         self.dropout = nn.Dropout(config.dropout)
-        
+
+    def generate_attention_mask(self, attention_mask):
+        dtype = next(self.parameters()).dtype
+        attention_mask = attention_mask.unsqueeze(1).unsqueeze(2)
+        attention_mask = attention_mask.to(dtype=dtype)
+        attention_mask = (1.0 - attention_mask) * torch.finfo(dtype).min
+        return attention_mask
     
     def forward(self, input_ids, attention_mask=None):
             
-        hidden_states = self.distilbert(input_ids, attention_mask) #[batch_size, seq_len, dim]
+        if attention_mask is None:
+            extended_attention_mask = None
+        else:
+            extended_attention_mask = self.generate_attention_mask(attention_mask)
+            
+        hidden_states = self.distilbert(input_ids, extended_attention_mask) #[batch_size, seq_len, dim]
         hidden_states = hidden_states[:, 0] # [batch_size, dim]
         hidden_states = self.pre_classifier(hidden_states)  # [batch_size, dim]
         hidden_states = self.activation(hidden_states)  # [batch_size, dim]
@@ -160,7 +186,7 @@ class MyDistilBertForQuestionAnswering(nn.Module):
     def forward(self, input_ids, attention_mask=None):
 
         hidden_states = self.distilbert(input_ids, attention_mask) # [batch_size, seq_len, dim]
-        hidden_states = self.dropout(hidden_states) # [batch_size, seq_len, dim] NOTE: why dropout here?
+        hidden_states = self.dropout(hidden_states) # [batch_size, seq_len, dim] 
         logits = self.qa_outputs(hidden_states) # [batch_size, seq_len, 2]
         start_logits, end_logits = logits.split(1, dim=-1) # [batch_size, seq_len, 1], [batch_size, seq_len, 1]
         
