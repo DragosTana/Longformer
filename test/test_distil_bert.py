@@ -9,9 +9,10 @@ sys.path.append(os.path.dirname(SCRIPT_DIR))
 
 from model.distil_bert import MyDistilBertForMaskedLM
 from transformers import DistilBertForMaskedLM, DistilBertConfig
-from model.config import Config
+from model.config import RobertaConfig as Config
 
-        
+unittest.TestLoader.sortTestMethodsUsing = None
+
 class TestMyDistilBertForMaskedLM(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -28,6 +29,7 @@ class TestMyDistilBertForMaskedLM(unittest.TestCase):
     def test_output_size(self):
         input_ids = torch.randint(0, 30522, (32, 128))
         attention_mask = torch.ones_like(input_ids)
+        attention_mask[0, -100:] = 0
         output_tensor = self.model(input_ids, attention_mask)
         self.assertEqual(output_tensor.size(), (32, 128, 30522))
     
@@ -35,7 +37,7 @@ class TestMyDistilBertForMaskedLM(unittest.TestCase):
     def test_same_output(self):
         input_ids = torch.randint(0, 30522, (1, self.config.max_position_embeddings))
         attention_mask = torch.ones_like(input_ids)
-        
+        attention_mask[0, -100:] = 0
         output = self.model(input_ids, attention_mask)
         original_output = self.original_model(input_ids, attention_mask)
         original_output = original_output.logits
@@ -46,7 +48,7 @@ class TestMyDistilBertForMaskedLM(unittest.TestCase):
     def test_same_output_values(self):
         input_ids = torch.randint(0, 30522, (1, self.config.max_position_embeddings))
         attention_mask = torch.ones_like(input_ids)
-        
+        attention_mask[0, -100:] = 0
         output = self.model(input_ids, attention_mask)
         original_output = self.original_model(input_ids, attention_mask)
         original_output = original_output.logits
@@ -58,7 +60,6 @@ class TestMyDistilBertForMaskedLM(unittest.TestCase):
         #this unwillingly tests also the attention mask handling
         input_ids = torch.randint(0, 30522, (1, self.config.max_position_embeddings))
         attention_mask = torch.ones_like(input_ids)
-    
         attention_mask[0, -100:] = 0
         
         output = self.model(input_ids, attention_mask)
@@ -67,6 +68,19 @@ class TestMyDistilBertForMaskedLM(unittest.TestCase):
         
         self.assertTrue(torch.allclose(output, original_output, atol=1e-5))
 
+    #def test_parameters_update(self):
+    #    input_ids = torch.randint(0, 30522, (1, self.config.max_position_embeddings))
+    #    attention_mask = torch.ones_like(input_ids)
+    #    attention_mask[0, -100:] = 0
+    #    output = self.model(input_ids, attention_mask)
+    #    loss = output.sum()
+    #    loss.backward()
+    #    optimizer = torch.optim.Adam(self.model.parameters(), lr=1e-3)
+    #    optimizer.step()
+    #    
+    #    for param, name in zip(self.model.parameters(), self.model.state_dict()):
+    #        self.assertIsNotNone(param.grad)
+            
 if __name__ == "__main__":
     unittest.main()
        

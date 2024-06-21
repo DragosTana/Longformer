@@ -316,6 +316,9 @@ def visualize_attention():
     print("Query: ")
     print(query)
     
+    print("Query after chunking: ")
+    print(q)
+    
     print("After matmul: ")
     print(result)
     
@@ -386,6 +389,6 @@ def test_time_diff():
     print("average time: ", total_time / 10)
     
 if __name__ == "__main__":
-    test_time_diff()
+    visualize_attention()
     
     
