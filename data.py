@@ -26,7 +26,10 @@ class WikiDataset(Dataset):
         self.shuffle = shuffle
         self.n_docs = n_docs
         
-        self.tokenizer = AutoTokenizer.from_pretrained(self.tokenizer_name, use_fast=True, return_tensors="pt")
+        if type(self.tokenizer_name) == str:
+            self.tokenizer = AutoTokenizer.from_pretrained(self.tokenizer_name, use_fast=True, return_tensors="pt")
+        else:
+            self.tokenizer = self.tokenizer_name
         self.data = self._raw_text_to_tokens()
         print("Dataset loaded and tokenized!")
         
@@ -98,11 +101,22 @@ class IMDB(Dataset):
         self.shuffle = shuffle
         self.longformer = longformer
         
-        self.tokenizer = AutoTokenizer.from_pretrained(self.tokenizer_name, use_fast=True, return_tensors="pt")
+        if type(self.tokenizer_name) == str:
+            self.tokenizer = AutoTokenizer.from_pretrained(self.tokenizer_name, use_fast=True, return_tensors="pt")
+        else:
+            self.tokenizer = self.tokenizer_name
         self.data = self._raw_text_to_tokens()
         print("IMDB dataset loaded and tokenized!")
         
+    @staticmethod
+    def clean_text(x):
+        x = re.sub('<.*?>', ' ', x)
+        x = re.sub('http\S+', ' ', x)
+        x = re.sub('\s+', ' ', x)
+        return x.lower().strip()
+
     def _preprocess_data(self, examples):
+        examples["text"] = [self.clean_text(text) for text in examples["text"]]
         tokenized_data = self.tokenizer(examples["text"], truncation=True, padding="max_length", max_length=self.max_seq_len)
         
         if self.longformer:
@@ -152,7 +166,10 @@ class Hyperpartisan(Dataset):
         self.cache_dir = cache_dir
         self.shuffle = shuffle
         
-        self.tokenizer = AutoTokenizer.from_pretrained(self.tokenizer_name, use_fast=True, return_tensors="pt")
+        if type(self.tokenizer_name) == str:
+            self.tokenizer = AutoTokenizer.from_pretrained(self.tokenizer_name, use_fast=True, return_tensors="pt")
+        else:
+            self.tokenizer = self.tokenizer_name
         self.data = self._raw_text_to_tokens()
         print("Hyperpartisan dataset loaded and tokenized!")
     
@@ -211,7 +228,10 @@ class SQuAD(Dataset):
         self.cache_dir = cache_dir
         self.shuffle = shuffle
         
-        self.tokenizer = AutoTokenizer.from_pretrained(self.tokenizer_name, use_fast=True, return_tensors="pt")
+        if type(self.tokenizer_name) == str:
+            self.tokenizer = AutoTokenizer.from_pretrained(self.tokenizer_name, use_fast=True, return_tensors="pt")
+        else:
+            self.tokenizer = self.tokenizer_name
         self.data = self._raw_text_to_tokens()
         print("SQuAD dataset loaded and tokenized!")
         
@@ -312,24 +332,21 @@ def compare_answers(preprocessed_data, raw_data):
             print(f"Real end position: {raw_answer['answers']['answer_start'][0] + len(raw_text)}")
             
 if __name__ == "__main__":
- 
-    #hyperpartisan = Hyperpartisan(num_workers=32, shuffle=True)
-    #raw_data = load_dataset("SemEvalWorkshop/hyperpartisan_news_detection", "bypublisher", cache_dir="./data", trust_remote_code=True)
-    #example = next(iter(hyperpartisan))
-    #
-    #
-    #uprocessed_data = raw_data["train"][0]
-    #print("Raw text: ", uprocessed_data["text"])
-    #print("Decoded input_ids: ", hyperpartisan.tokenizer.decode(example["input_ids"]))
-    #print("Label: ", example["labels"])
+    
     from transformers import DataCollatorWithPadding
+    from torch.utils.data import DataLoader    
     
-    dataset = IMDB(num_workers=16, shuffle=True, longformer=True)
-    train, test = dataset.split()
-    datacollator = DataCollatorWithPadding(tokenizer=dataset.tokenizer)
-    trainloader = torch.utils.data.DataLoader(train, batch_size=8, shuffle=True, collate_fn=datacollator)   
-    example = next(iter(trainloader))
-    print("Input_ids: ", example["input_ids"])
-    print("Attention mask: ", example["attention_mask"])
+    imdb = IMDB(tokenizer_name="distilbert/distilroberta-base",
+                max_seq_len=512,
+                num_workers=16,
+                cache_dir="./data",
+                shuffle=True,
+                longformer=False)
     
+    train, test = imdb.split()    
+    collator = DataCollatorWithPadding(tokenizer=imdb.tokenizer)
+    train_loader = DataLoader(train, batch_size=4, shuffle=True, collate_fn=collator)
+    example = next(iter(train_loader))
+    
+    print(example)
     

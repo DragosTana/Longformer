@@ -24,6 +24,7 @@ class Trainer:
                  log: bool = False,
                  max_epochs: int = 500,
                  gradient_accumulation_steps: int = 1,
+                 save_every_n_steps: Optional[int] = None,
                  max_grad_norm: Optional[float] = None,
                  use_mixed_precision: bool = False,
                  project_name: str = "my-awesome-project"):
@@ -53,6 +54,7 @@ class Trainer:
         self.continue_training = continue_training
         self.log = log
         self.max_epochs = max_epochs
+        self.save_every_n_steps = save_every_n_steps
         self.gradient_accumulation_steps = gradient_accumulation_steps
         self.max_grad_norm = max_grad_norm
         self.use_mixed_precision = use_mixed_precision
@@ -63,6 +65,7 @@ class Trainer:
         self.best_val_metrics = None
         self._start_epoch = 0
         self._has_validation = False
+        self._model_name = None
 
         assert logger in ["wandb", "tensorboard", None], "Invalid logger. Choose between 'wandb' and 'tensorboard'."
         assert self.device in ["cpu", "cuda"], "Invalid device. Choose between 'cpu' and 'cuda'."
@@ -178,9 +181,10 @@ class Trainer:
         model.train()
         training_loss = 0.0
         accumulated_loss = 0.0
-    
-        with tqdm(enumerate(dataloader), total=len(dataloader)) as pbar:
-            for i, data in pbar:
+        total_steps = len(dataloader) // self.gradient_accumulation_steps
+        
+        with tqdm(total=total_steps) as pbar:
+            for i, data in enumerate(dataloader):
                 data = {key: value.to(self.device) for key, value in data.items()}
                 with autocast(enabled=self.use_mixed_precision, dtype=torch.float16):
                     loss, _ = model.train_step(data)
@@ -205,14 +209,21 @@ class Trainer:
                             nn_utils.clip_grad_norm_(model.parameters(), self.max_grad_norm)
                         self.optimizer.step()
                     self.optimizer.zero_grad()
+                    pbar.update(1)
+                    if self.log:
+                        self._log_metrics({"Batch Loss": accumulated_loss / (i + 1), 
+                                       "learning_rate": self.optimizer.param_groups[0]['lr']})
+      
     
-                if self.scheduler:
-                    self.scheduler.step()  # Step the scheduler at each batch iteration
+                #if self.scheduler:
+                #    self.scheduler.step()  # Step the scheduler at each batch iteration
+                
+                if self.save_every_n_steps and (i + 1) % self.save_every_n_steps == 0:
+                    state_dict = model.state_dict()
+                    torch.save(state_dict, os.path.join(self.default_root_dir, 'weights', f'{self._model_name}_{i + 1}.model'))
     
                 pbar.set_postfix({'Training Loss': accumulated_loss / (i + 1)})
-                if self.log:
-                    self._log_metrics({"Batch Loss": accumulated_loss / (i + 1), "learning_rate": self.optimizer.param_groups[0]['lr']})
-    
+
             training_loss = accumulated_loss / len(dataloader)
     
         return training_loss
@@ -281,6 +292,7 @@ class Trainer:
         if self.continue_training:
             model, self.optimizer, _, self.scheduler = self._continue_training(model, self.optimizer, self.scheduler)
         model.to(self.device)
+        self._model_name = model.__class__.__name__
 
         for epoch in range(self._start_epoch, self.max_epochs):
             # Training
