@@ -149,6 +149,7 @@ class Hyperpartisan(Dataset):
                  num_workers: int = 16,
                  cache_dir: str = "./data", 
                  shuffle: bool = False,
+                 longformer: bool = False,
                 ): 
         """
         Initializes the Hyperpartisan dataset.
@@ -165,6 +166,7 @@ class Hyperpartisan(Dataset):
         self.num_workers = num_workers
         self.cache_dir = cache_dir
         self.shuffle = shuffle
+        self.longformer = longformer
         
         if type(self.tokenizer_name) == str:
             self.tokenizer = AutoTokenizer.from_pretrained(self.tokenizer_name, use_fast=True, return_tensors="pt")
@@ -175,23 +177,42 @@ class Hyperpartisan(Dataset):
     
     @staticmethod
     def clean_text(text):
-        cleaned_text = re.sub(r'<.*?>', '', text)
-        cleaned_text = re.sub(r'[^\w\s]', '', cleaned_text)
-        cleaned_text = re.sub(r'\s+', ' ', cleaned_text).strip()
+        cleaned_text = re.sub(r"[a-zA-Z]+\/[a-zA-Z]+", " ", text)
+        cleaned_text = re.sub(r"\n", " ", cleaned_text)
+        cleaned_text = re.sub(r"&#160;", "", cleaned_text)
+        cleaned_text = re.sub(r'<.*?>', '', cleaned_text)
+        
+        #remove urls
+        cleaned_text = re.sub(r'http\S+', '', cleaned_text)
+        cleaned_text = re.sub(r'www\S+', '', cleaned_text)
+        cleaned_text = re.sub(r'href\S+', '', cleaned_text)
+        
+        #remove multiple spaces
+        cleaned_text = re.sub(r"[ \s\t\n]+", " ", cleaned_text)
+        
+        #remove repetitions
+        cleaned_text = re.sub(r"([!?.]){2,}", r"\1", cleaned_text)
+        cleaned_text = re.sub(r"\b(\S*?)(.)\2{2,}\b", r"\1\2", cleaned_text)
+        
         return cleaned_text
         
     def _preprocess_data(self, examples):
         examples["text"] = [self.clean_text(text) for text in examples["text"]]
-        tokenized_examples = self.tokenizer(examples["text"], truncation=True, padding="max_length", max_length=self.max_seq_len)
+        tokenized_examples = self.tokenizer(examples["text"]) #, truncation=True, padding="max_length", max_length=self.max_seq_len)
         tokenized_examples["labels"] = examples["hyperpartisan"]
+        tokenized_examples["labels"] = [int(label) for label in tokenized_examples["labels"]]
+        if self.longformer:
+            attention_mask = torch.tensor(tokenized_examples["attention_mask"])
+            attention_mask[:, 0] = 2
+            tokenized_examples["attention_mask"] = attention_mask.tolist()
+            
         return tokenized_examples
     
     def _raw_text_to_tokens(self):
         print("Loading Hyperpartisan News Detection dataset...")
-        raw_data = load_dataset("SemEvalWorkshop/hyperpartisan_news_detection", "bypublisher", cache_dir=self.cache_dir, trust_remote_code=True)
-        raw_data = raw_data.remove_columns(['title', 'url', 'published_at', 'bias'])
+        raw_data = load_dataset("SemEvalWorkshop/hyperpartisan_news_detection", "byarticle", cache_dir=self.cache_dir, trust_remote_code=True)
+        raw_data = raw_data.remove_columns(['title', 'url', 'published_at'])
         tokenized_data = raw_data.map(self._preprocess_data, batched=True, num_proc=self.num_workers, remove_columns=["text", "hyperpartisan"])
-        
         return tokenized_data["train"]
         
     def __len__(self):
@@ -199,7 +220,14 @@ class Hyperpartisan(Dataset):
     
     def __getitem__(self, idx):
         return self.data[idx]
-
+    
+    def split(self, split_ratio: float = 0.8):
+        train_size = int(split_ratio * len(self))
+        test_size = len(self) - train_size
+        return torch.utils.data.random_split(self, [train_size, test_size])
+    
+        
+    
 class SQuAD(Dataset):
     """
     SQuAD dataset for question answering. Loads the SQuAD dataset from Huggingface, tokenizes and preprocesses the data
@@ -243,8 +271,8 @@ class SQuAD(Dataset):
         inputs = self.tokenizer(
             questions,
             contexts,
-            max_length=self.max_seq_len,
-            truncation="only_second",
+            #max_length=self.max_seq_len,
+            #truncation="only_second",
             return_offsets_mapping=True,
             padding="max_length",
         )
@@ -336,17 +364,20 @@ if __name__ == "__main__":
     from transformers import DataCollatorWithPadding
     from torch.utils.data import DataLoader    
     
-    imdb = IMDB(tokenizer_name="distilbert/distilroberta-base",
-                max_seq_len=512,
-                num_workers=16,
-                cache_dir="./data",
-                shuffle=True,
-                longformer=False)
-    
-    train, test = imdb.split()    
-    collator = DataCollatorWithPadding(tokenizer=imdb.tokenizer)
+    hyperpartisan = Hyperpartisan(tokenizer_name="distilbert/distilroberta-base",
+                                  max_seq_len=512,
+                                  num_workers=16,
+                                  cache_dir="./data",
+                                  shuffle=True,
+                                  longformer=False)
+    train, test = hyperpartisan.split()
+    print(len(train), len(test))
+    collator = DataCollatorWithPadding(tokenizer=hyperpartisan.tokenizer)
     train_loader = DataLoader(train, batch_size=4, shuffle=True, collate_fn=collator)
     example = next(iter(train_loader))
+    print("Hyperpartisan dataset example:")
+    #decode example
+    print(hyperpartisan.tokenizer.decode(example["input_ids"][0]))
     
-    print(example)
+    
     
