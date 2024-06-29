@@ -16,6 +16,7 @@ from typing import Optional, Tuple
     
 class Longformer(RobertaModel):
     def __init__(self, config, add_pooling_layer=True):
+        self.config = config    
         super(Longformer, self).__init__(config, add_pooling_layer)
         if config.attention_mode == 'n2':
             pass  # do nothing, use BertSelfAttention instead

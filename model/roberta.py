@@ -375,15 +375,15 @@ class RobertaForSequenceClassification(nn.Module):
         attention_mask = batch['attention_mask']
         labels = batch['labels']
         outputs = self(input_ids, attention_mask)
-        loss = nn.CrossEntropyLoss()(outputs, labels.view(-1))
+        loss = nn.CrossEntropyLoss()(outputs.view(-1, self.num_labels), labels.view(-1))
         return loss, outputs
         
-    def validation_step(self, batch):
+    def test_step(self, batch):
         input_ids = batch['input_ids']
         attention_mask = batch['attention_mask']
         labels = batch['labels']
         outputs = self(input_ids, attention_mask)
-        loss = nn.CrossEntropyLoss()(outputs, labels.view(-1))
+        loss = nn.CrossEntropyLoss()(outputs.view(-1, self.num_labels), labels.view(-1))
         return loss, outputs
 
 if __name__ == "__main__":

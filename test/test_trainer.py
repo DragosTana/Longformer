@@ -51,7 +51,7 @@ if __name__ == "__main__":
     # Initialize the model, optimizer, and scheduler
     model = SimpleModel()
     optimizer = optim.Adam(model.parameters(), lr=0.001)
-    scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=5, gamma=0.1)
+    scheduler = optim.lr_scheduler.PolynomialLR(optimizer, total_iters=4000, power=1.0)
 
     def compute_metrics(batch):
         data, target = batch
@@ -72,6 +72,7 @@ if __name__ == "__main__":
         log=True, 
         max_epochs=40,  
         gradient_accumulation_steps=1,
+        warmup_steps=300,
         project_name="prova_MNIST",
     )
 

@@ -21,33 +21,19 @@ import time
 import random
 import numpy as np
 from itertools import chain
-import torch
-import torch.nn as nn
 
 import torch
 from torch.utils.data import Dataset, DataLoader
+
+from pytorch_lightning.loggers import WandbLogger
+from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor
+from pytorch_lightning import LightningModule, Trainer
+
 from transformers import RobertaConfig, RobertaModel, AutoModel, AutoTokenizer, RobertaConfig
-
-from model.config import LongformerConfig
-from model.longformer import Longformer 
 from model.sliding_chunks import pad_to_window_size
-from torch import optim
-from trainer import Trainer
-import wandb
-import tqdm
-
-seed = 42
-random.seed(seed)
-np.random.seed(seed)
-torch.manual_seed(seed)
-if torch.cuda.is_available():
-    torch.cuda.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
+from transformers import get_linear_schedule_with_warmup
 
 def normalize_string(s):
-    """
-    Normalize the string by removing extra spaces and fixing common punctuation issues.
-    """
     s = s.replace(' .', '.')
     s = s.replace(' ,', ',')
     s = s.replace(' !', '!')
@@ -65,6 +51,7 @@ def get_wikihop_roberta_tokenizer(tokenizer_name='roberta-base'):
     tokenizer = RobertaTokenizer.from_pretrained(tokenizer_name)
     tokenizer.add_tokens(additional_tokens)
     return tokenizer
+
 
 
 def preprocess_wikihop(infile, tokenizer_name='roberta-large', sentence_tokenize=False):
@@ -105,7 +92,7 @@ def preprocess_wikihop(infile, tokenizer_name='roberta-large', sentence_tokenize
             for candidate in instance['candidates']
         ]
         answer_index = instance['candidates'].index(instance['answer'])
-        
+
         instance['query_tokens'] = query_tokens
         instance['supports_tokens'] = supports_tokens
         instance['candidate_tokens'] = candidate_tokens
@@ -128,7 +115,6 @@ def preprocess_wikihop_train_dev(rootdir, tokenizer_name='roberta-large', senten
             fout.write(json.dumps(data))
 
 
-
 class WikihopQADataset(Dataset):
     def __init__(self, filepath, shuffle_candidates, tokenize=False, tokenizer_name='roberta-large', sentence_tokenize=False):
         super().__init__()
@@ -149,8 +135,7 @@ class WikihopQADataset(Dataset):
         # for batch size = 1
         assert len(x) == 1
         return [x[0][0].unsqueeze(0), x[0][1].unsqueeze(0), x[0][2], x[0][3]]
-        return x
-    
+
     def __len__(self):
         return len(self.instances)
 
@@ -196,24 +181,24 @@ class WikihopQADataset(Dataset):
 
         # candidate_ids, support_ids, prediction_indices, correct_prediction_index
         return torch.tensor(candidate_ids), torch.tensor(support_ids), torch.tensor(predicted_indices), torch.tensor([answer_index])
-        #return {"candidate_ids": torch.tensor(candidate_ids), "support_ids": torch.tensor(support_ids), "predicted_indices": torch.tensor(predicted_indices), "correct_prediction_index": torch.tensor([answer_index])}
 
-def load_longformer(model_name='longformer-base-4096'):
-    config = LongformerConfig.from_pretrained(model_name + '/')
-    config.attention_mode = 'sliding_chunks'
-    model = Longformer.from_pretrained(model_name + '/', config=config)
 
-    # add four additional word embeddings for the special tokens
-    current_embed = model.embeddings.word_embeddings.weight
-    current_vocab_size, embed_size = current_embed.size()
-    new_embed = model.embeddings.word_embeddings.weight.new_empty(current_vocab_size + 4, embed_size)
-    new_embed.normal_(mean=torch.mean(current_embed).item(), std=torch.std(current_embed).item())
-    new_embed[:current_vocab_size] = current_embed
-    model.embeddings.word_embeddings.num_embeddings = current_vocab_size + 4
-    del model.embeddings.word_embeddings.weight
-    model.embeddings.word_embeddings.weight = torch.nn.Parameter(new_embed)
-
-    return model
+#def load_longformer(model_name='longformer-base-4096'):
+#    config = LongformerConfig.from_pretrained(model_name + '/')
+#    config.attention_mode = 'sliding_chunks'
+#    model = Longformer.from_pretrained(model_name + '/', config=config)
+#
+#    # add four additional word embeddings for the special tokens
+#    current_embed = model.embeddings.word_embeddings.weight
+#    current_vocab_size, embed_size = current_embed.size()
+#    new_embed = model.embeddings.word_embeddings.weight.new_empty(current_vocab_size + 4, embed_size)
+#    new_embed.normal_(mean=torch.mean(current_embed).item(), std=torch.std(current_embed).item())
+#    new_embed[:current_vocab_size] = current_embed
+#    model.embeddings.word_embeddings.num_embeddings = current_vocab_size + 4
+#    del model.embeddings.word_embeddings.weight
+#    model.embeddings.word_embeddings.weight = torch.nn.Parameter(new_embed)
+#
+#    return model
 
 def load_distilroberta(model_name='distilbert/distilroberta-base'):
     
@@ -233,47 +218,11 @@ def load_distilroberta(model_name='distilbert/distilroberta-base'):
     model.embeddings.word_embeddings.num_embeddings = current_vocab_size + 4
     del model.embeddings.word_embeddings.weight
     model.embeddings.word_embeddings.weight = torch.nn.Parameter(new_embed)
+
     print("Loaded model")
     print(model)
     return model
 
-
-def get_activations_longformer(model, candidate_ids, support_ids, max_seq_len, truncate_seq_len):
-    # max_seq_len: the maximum sequence length possible for the model
-    # truncate_seq_len: only use the first truncate_seq_len total tokens in the candidate + supports (e.g. just the first 4096)
-    candidate_len = candidate_ids.shape[1]
-    support_len = support_ids.shape[1]
-
-    # attention_mask = 1 for local, 2 for global, 0 for padding (which we can ignore as always batch size=1)
-    if candidate_len + support_len <= max_seq_len:
-        token_ids = torch.cat([candidate_ids, support_ids], dim=1)
-        attention_mask = torch.ones(token_ids.shape, dtype=torch.long, device=token_ids.device)
-        # global attention to all candidates
-        attention_mask[0, :candidate_len] = 2
-        token_ids, attention_mask = pad_to_window_size(
-            token_ids, attention_mask, model.config.attention_window[0], model.config.pad_token_id)
-
-        return [model(token_ids, attention_mask=attention_mask)[0]]
-
-    else:
-        all_activations = []
-        available_support_len = max_seq_len - candidate_len
-        for start in range(0, support_len, available_support_len):
-            end = min(start + available_support_len, support_len, truncate_seq_len)
-            token_ids = torch.cat([candidate_ids, support_ids[:, start:end]], dim=1)
-            attention_mask = torch.ones(token_ids.shape, dtype=torch.long, device=token_ids.device)
-            # global attention to all candidates
-            attention_mask[0, :candidate_len] = 2
-            token_ids, attention_mask = pad_to_window_size(
-                token_ids, attention_mask, model.config.attention_window[0], model.config.pad_token_id)
-
-            activations = model(token_ids, attention_mask=attention_mask)[0]
-            all_activations.append(activations)
-            if end == truncate_seq_len:
-                break
-
-        return all_activations
-    
 def pad_to_max_length(input_ids, attention_mask, max_length, pad_token_id):
     """
     Pad input_ids and attention_mask to max_length
@@ -312,16 +261,66 @@ def get_activations_roberta(model, candidate_ids, support_ids, max_seq_len, trun
                 break
         return all_activations
 
-class WikihopQAModel(nn.Module):
-    def __init__(self):
-        super(WikihopQAModel, self).__init__()
 
-        self.distil_roberta = load_distilroberta("distilbert/distilroberta-base")
-        self.answer_score = torch.nn.Linear(self.distil_roberta.embeddings.word_embeddings.weight.shape[1], 1, bias=False)
+def get_activations(model, candidate_ids, support_ids, max_seq_len, truncate_seq_len):
+    # max_seq_len: the maximum sequence length possible for the model
+    # truncate_seq_len: only use the first truncate_seq_len total tokens in the candidate + supports (e.g. just the first 4096)
+    candidate_len = candidate_ids.shape[1]
+    support_len = support_ids.shape[1]
+
+    # attention_mask = 1 for local, 2 for global, 0 for padding (which we can ignore as always batch size=1)
+    if candidate_len + support_len <= max_seq_len:
+        token_ids = torch.cat([candidate_ids, support_ids], dim=1)
+        attention_mask = torch.ones(token_ids.shape, dtype=torch.long, device=token_ids.device)
+        # global attention to all candidates
+        attention_mask[0, :candidate_len] = 2
+        token_ids, attention_mask = pad_to_window_size(
+            token_ids, attention_mask, model.config.attention_window[0], model.config.pad_token_id)
+
+        return [model(token_ids, attention_mask=attention_mask)[0]]
+
+    else:
+        all_activations = []
+        available_support_len = max_seq_len - candidate_len
+        for start in range(0, support_len, available_support_len):
+            end = min(start + available_support_len, support_len, truncate_seq_len)
+            token_ids = torch.cat([candidate_ids, support_ids[:, start:end]], dim=1)
+            attention_mask = torch.ones(token_ids.shape, dtype=torch.long, device=token_ids.device)
+            # global attention to all candidates
+            attention_mask[0, :candidate_len] = 2
+            token_ids, attention_mask = pad_to_window_size(
+                token_ids, attention_mask, model.config.attention_window[0], model.config.pad_token_id)
+
+            activations = model(token_ids, attention_mask=attention_mask)[0]
+            all_activations.append(activations)
+            if end == truncate_seq_len:
+                break
+
+        return all_activations
+
+
+class WikihopQAModel(LightningModule):
+    def __init__(self, args):
+        super(WikihopQAModel, self).__init__()
+        self.args = args
+
+        self.longformer = load_distilroberta(args.model_name)
+        self.answer_score = torch.nn.Linear(self.longformer.embeddings.word_embeddings.weight.shape[1], 1, bias=False)
         self.loss = torch.nn.CrossEntropyLoss(reduction='sum')
-        self._truncate_seq_len = 100000000000
-            
-    def forward(self, data, return_predicted_index=False):
+
+        self._truncate_seq_len = self.args.truncate_seq_len
+        if self._truncate_seq_len is None:
+            # default is to use all context
+            self._truncate_seq_len = 1000000
+
+        self.ddp = self.args.num_gpus > 1
+
+        # Register as a buffer so it is saved in checkpoint and properly restored.
+        num_grad_updates = torch.tensor(0, dtype=torch.long)
+        self.register_buffer('_num_grad_updates', num_grad_updates)
+
+
+    def forward(self, candidate_ids, support_ids, prediction_indices, correct_prediction_index, return_predicted_index=False):
         """
         We always consider batch size of one instance which has:
             question, candidate answers, supporting documents, and the correct answer.
@@ -332,99 +331,170 @@ class WikihopQAModel(nn.Module):
             predicted_indices = (1, num_candidates): [15, 22, 30, ..], a list of the indices in candidate_ids corresponding to the [ent] tokens used to predict logit for this candidate
             answer_index = (1, ) with the index of the correct answer
         """
-        candidate_ids, support_ids, prediction_indices, correct_prediction_index = data
+
+        # get activations
         activations = get_activations_roberta(
-            self.distil_roberta,
+            self.longformer,
             candidate_ids,
             support_ids,
-            512,
+            self.args.max_seq_len,
             self._truncate_seq_len)
-        
-        prediction_activations = [act.index_select(1, prediction_indices) for act in activations] # [batch_size, num_candidates, hidden_size]
+
+        # activations is a list of activations [(batch_size, max_seq_len (or shorter), embed_dim)]
+        # select the activations we will make predictions at from each element of the list.
+        # we are guaranteed the prediction_indices are valid indices since each element
+        # of activations list has all of the candidates
+        prediction_activations = [act.index_select(1, prediction_indices) for act in activations]
         prediction_scores = [
             self.answer_score(prediction_act).squeeze(-1)
             for prediction_act in prediction_activations
         ]
-        #sum_prediction_scores = torch.cat(
-        #        [pred_scores.unsqueeze(-1) for pred_scores in prediction_scores], dim=-1
-        #).sum(dim=-1)
-        average_prediction_scores = torch.cat(
-            [pred_scores.unsqueeze(-1) for pred_scores in prediction_scores], dim=-1
-        ).mean(dim=-1)
-        loss = self.loss(average_prediction_scores, correct_prediction_index)
+        # prediction_scores is a list of tensors, each is (batch_size, num_predictions)
+        # sum across the list for each possible prediction
+        sum_prediction_scores = torch.cat(
+                [pred_scores.unsqueeze(-1) for pred_scores in prediction_scores], dim=-1
+        ).sum(dim=-1)
+
+        loss = self.loss(sum_prediction_scores, correct_prediction_index)
+
         batch_size = candidate_ids.new_ones(1) * prediction_activations[0].shape[0]
-        predicted_answers = average_prediction_scores.argmax(dim=1)
+
+        predicted_answers = sum_prediction_scores.argmax(dim=1)
         num_correct = (predicted_answers == correct_prediction_index).int().sum()
-        
+
         if not return_predicted_index:
             return loss, batch_size, num_correct
         else:
             return loss, batch_size, num_correct, predicted_answers
-        
-    def train_step(self, batch, return_predicted_index=False):
-        output = self.forward(batch, return_predicted_index)
-        if return_predicted_index:
-            loss, batch_size, num_correct, predicted_answers = output
-            return loss, batch_size, num_correct, predicted_answers
-        else:
-            loss, batch_size, num_correct = output
-            return loss, batch_size, num_correct
-        
-    def test_step(self, batch, return_predicted_index=False):
-        output = self.forward(batch, return_predicted_index)
-        if return_predicted_index:
-            loss, batch_size, num_correct, predicted_answers = output
-            return loss, batch_size, num_correct, predicted_answers
-        else:
-            loss, batch_size, num_correct = output
-            return loss, batch_size, num_correct
-        
-        
-if __name__ == "__main__":
+
+    def training_step(self, batch, batch_idx):
+        loss, batch_size, num_correct = self(*batch)
+        self.log('train_loss', loss, prog_bar=True)
+        self.log('train_num_correct', num_correct)
+        return loss
     
-    train_dataset = WikihopQADataset("data/wikihop/train.tokenized_2048.json", shuffle_candidates=False, tokenize=False)
-    val_dataset = WikihopQADataset("data/wikihop/dev.tokenized_2048.json", shuffle_candidates=False, tokenize=False)
-        
-    #select only 1000 instances for training
-    train_dataset.instances = train_dataset.instances[:1000]
-    val_dataset.instances = val_dataset.instances[:100] 
+    def test_step(self, batch, batch_idx):
+        loss, batch_size, num_correct, predicted_answers = self(*batch, return_predicted_index=True)
+        self.log('test_loss', loss)
+        self.log('test_num_correct', num_correct)
+        return predicted_answers
     
-    # batch size = 1 but we accumulate gradients
-    train_loader = DataLoader(train_dataset, batch_size=1, shuffle=True, collate_fn=WikihopQADataset.collate_single_item)
-    test_loader = DataLoader(val_dataset, batch_size=1, shuffle=False, collate_fn=WikihopQADataset.collate_single_item)
+    def validation_step(self, batch, batch_idx):
+        loss, batch_size, num_correct, predicted_answers = self(*batch, return_predicted_index=True)
+        self.log('val_loss', loss)
+        self.log('val_num_correct', num_correct)
+        return predicted_answers
     
-    print(f"Lenght of train_loader: {len(train_loader)}")
-    print(f"Lenght of test_loader: {len(test_loader)}")
+    def total_steps(self):
+        return self
     
-    model = WikihopQAModel()
+    def configure_optimizers(self):
+        optimizer = torch.optim.AdamW(self.parameters(), lr=self.args.lr)
+        scheduler = torch.optim.lr_scheduler.PolynomialLR(optimizer, total_iters=self.args.num_epochs*len(self.train_dataloader()), power=1.0)
+        return [optimizer], [{"scheduler": scheduler, "interval": "step"}]
+            
+    def _get_loader(self, split, fname=None, tokenize=False):
+            if fname is None:
+                if self.args.sentence_tokenize:
+                    fname = os.path.join(self.args.data_dir, "{}.sentence.tokenized.json".format(split))
+                else:
+                    fname = os.path.join(self.args.data_dir, "{}.tokenized.json".format(split))
+            is_train = split == 'train'
+
+            dataset = WikihopQADataset(fname, is_train, tokenize=tokenize, tokenizer_name=self.args.tokenizer_name, sentence_tokenize=self.args.sentence_tokenize)
+
+            if self.ddp:
+                sampler = torch.utils.data.distributed.DistributedSampler(dataset, shuffle=is_train)
+            else:
+                sampler = None
+
+            return DataLoader(
+                    dataset,
+                    batch_size=1,
+                    num_workers=self.args.num_workers,
+                    shuffle=is_train and sampler is None,
+                    sampler=sampler,
+                    collate_fn=WikihopQADataset.collate_single_item,
+            )
+
+    def train_dataloader(self):
+        return self._get_loader('train')
     
-    optimizer = optim.AdamW(model.parameters(), lr=3e-05, weight_decay=0.01, betas=(0.9, 0.98))
-    epochs = 5
-    batch_size = 1
-    num_examples = len(train_dataset)
-    training_steps = epochs * num_examples // batch_size
-    scheduler = optim.lr_scheduler.PolynomialLR(optimizer, total_iters=training_steps, power=1.0)
+    def val_dataloader(self):
+        return self._get_loader('dev')
+
+    @staticmethod
+    def add_model_specific_args(parser):
+        parser.add_argument("--save-dir", type=str, help="Location to store model checkpoint", default="./model/weights/")
+        parser.add_argument("--save-prefix", type=str, help="Checkpoint prefix", default="wikihop")
+        parser.add_argument("--data-dir", type=str, help="/path/to/qangaroo_v1.1/wikihop", default="data/wikihop/")
+        parser.add_argument("--model-name", type=str, default='distilbert/distilroberta-base')
+        parser.add_argument("--tokenizer-name", type=str, default='roberta-large')
+        parser.add_argument("--num-gpus", type=int, default=1)
+        parser.add_argument("--batch-size", type=int, default=8, help="Batch size per GPU")
+        parser.add_argument("--num-workers", type=int, default=4, help="Number of data loader workers")
+        parser.add_argument("--num-epochs", type=int, default=5, help="Number of epochs")
+        parser.add_argument("--val-check-interval", type=int, default=250, help="number of gradient updates between checking validation loss")
+        parser.add_argument("--warmup", type=int, default=200, help="Number of warmup steps")
+        parser.add_argument("--lr", type=float, default=3e-5, help="Maximum learning rate")
+        parser.add_argument("--weight_decay", type=float, default=0.01)
+        parser.add_argument("--beta2", type=float, default=0.98, help="AdamW beta2")
+        parser.add_argument("--max-seq-len", type=int, default=512, help="The maximum sequence length for the model")
+        parser.add_argument("--truncate-seq-len", type=int, default=None, help="Only consider this many tokens of the input, default is to use all of the available context")
+        parser.add_argument("--seed", type=int, default=1234, help="Seed")
+        parser.add_argument('--resume-from-checkpoint', default=None, type=str)
+        parser.add_argument('--fp16', default=True, action='store_true')
+        parser.add_argument('--amp-level', default="O2", type=str)
+        parser.add_argument('--sentence-tokenize', default=False, action='store_true')
+
+        return parser
     
-    def compute_accuracy(batch, outputs):
-        _, batch_size, num_correct = outputs
-        return {"accuracy": num_correct.item()}
-        
-    
-    trainer = Trainer(
-        device="cuda" if torch.cuda.is_available() else "cpu",
-        default_root_dir="./model/",
-        optimizer=optimizer,
-        scheduler=scheduler,
-        compute_metrics=compute_accuracy,
-        logger="wandb",
-        log=False,
-        max_epochs=epochs,
-        use_mixed_precision=True,
-        gradient_accumulation_steps=1, 
-        warmup_steps=100,
-        val_check_interval=10,
-        project_name="WikihopQA",
+def main(args):
+    random.seed(args.seed)
+    np.random.seed(args.seed)
+    torch.manual_seed(args.seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(args.seed)
+
+    model = WikihopQAModel(args)
+
+    logger = WandbLogger(name=args.save_prefix, project='wikihop', save_dir=args.save_dir)
+
+    checkpoint_callback = ModelCheckpoint(
+        dirpath=os.path.join(args.save_dir, args.save_prefix, 'checkpoint'),
+        save_top_k=1,
+        verbose=True,
+        monitor='val_accuracy',
+        mode='max',
     )
-    
-    trainer.train(model, train_loader, test_loader)
-    
+
+    learning_rate_monitor = LearningRateMonitor(logging_interval='step')
+
+    if args.num_gpus > 1:
+        distributed_backend = 'ddp'
+    else:
+        distributed_backend = None
+
+    trainer = Trainer(accumulate_grad_batches=args.batch_size,
+                      max_epochs=args.num_epochs, 
+                      val_check_interval=args.val_check_interval * args.batch_size,
+                      logger=logger,
+                      callbacks=[checkpoint_callback, learning_rate_monitor],
+                      precision=16 if args.fp16 else 32,
+    )
+
+    trainer.fit(model)
+
+
+if __name__ == '__main__':
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--prepare-data", default=False, action="store_true")
+    parser = WikihopQAModel.add_model_specific_args(parser)
+    args = parser.parse_args()
+
+    if args.prepare_data:
+        preprocess_wikihop_train_dev(args.data_dir, args.tokenizer_name, args.sentence_tokenize)
+    else:
+        main(args)

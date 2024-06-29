@@ -331,7 +331,7 @@ class MyDistiBertClassification(nn.Module):
         return loss, outputs
     
 class MyDistilBertForQuestionAnswering(nn.Module):
-    def __init__(self, config: Config):
+    def __init__(self, config):
         super().__init__()
         self.distilbert = DistilBERTModel(config)
         self.qa_outputs = nn.Linear(config.dim, 2)

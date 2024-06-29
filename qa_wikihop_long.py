@@ -33,6 +33,7 @@ from model.longformer import Longformer
 from model.sliding_chunks import pad_to_window_size
 from torch import optim
 from trainer import Trainer
+from safetensors.torch import load_file
 import wandb
 import tqdm
 
@@ -198,22 +199,53 @@ class WikihopQADataset(Dataset):
         return torch.tensor(candidate_ids), torch.tensor(support_ids), torch.tensor(predicted_indices), torch.tensor([answer_index])
         #return {"candidate_ids": torch.tensor(candidate_ids), "support_ids": torch.tensor(support_ids), "predicted_indices": torch.tensor(predicted_indices), "correct_prediction_index": torch.tensor([answer_index])}
 
+#def load_longformer(model_name='longformer-base-4096'):
+#    config = LongformerConfig.from_pretrained(model_name + '/')
+#    config.attention_mode = 'sliding_chunks'
+#    model = Longformer.from_pretrained(model_name + '/', config=config)
+#
+#    # add four additional word embeddings for the special tokens
+#    current_embed = model.embeddings.word_embeddings.weight
+#    current_vocab_size, embed_size = current_embed.size()
+#    new_embed = model.embeddings.word_embeddings.weight.new_empty(current_vocab_size + 4, embed_size)
+#    new_embed.normal_(mean=torch.mean(current_embed).item(), std=torch.std(current_embed).item())
+#    new_embed[:current_vocab_size] = current_embed
+#    model.embeddings.word_embeddings.num_embeddings = current_vocab_size + 4
+#    del model.embeddings.word_embeddings.weight
+#    model.embeddings.word_embeddings.weight = torch.nn.Parameter(new_embed)
+#
+#    return model
+
 def load_longformer(model_name='longformer-base-4096'):
-    config = LongformerConfig.from_pretrained(model_name + '/')
-    config.attention_mode = 'sliding_chunks'
-    model = Longformer.from_pretrained(model_name + '/', config=config)
+    config = LongformerConfig(vocab_size=50265,
+                                num_hidden_layers=6,
+                                hidden_size=768,
+                                num_attention_heads=12,
+                                max_position_embeddings=2050,
+                                attention_window=[256]*6,
+                                attention_dilation=[1]*6, 
+                                num_labels=2, 
+                                type_vocab_size=1,
+                                )
+    longformer = Longformer(config, add_pooling_layer=False)
+    state_dict = load_file("./checkpoint-3000/model.safetensors")
+    #remove ".roberta" from the keys
+    state_dict = {k.replace("roberta.", ""): v for k, v in state_dict.items()}
+    longformer.load_state_dict(state_dict, strict=False)
 
     # add four additional word embeddings for the special tokens
-    current_embed = model.embeddings.word_embeddings.weight
+    current_embed = longformer.embeddings.word_embeddings.weight
     current_vocab_size, embed_size = current_embed.size()
-    new_embed = model.embeddings.word_embeddings.weight.new_empty(current_vocab_size + 4, embed_size)
+    new_embed = longformer.embeddings.word_embeddings.weight.new_empty(current_vocab_size + 4, embed_size)
     new_embed.normal_(mean=torch.mean(current_embed).item(), std=torch.std(current_embed).item())
     new_embed[:current_vocab_size] = current_embed
-    model.embeddings.word_embeddings.num_embeddings = current_vocab_size + 4
-    del model.embeddings.word_embeddings.weight
-    model.embeddings.word_embeddings.weight = torch.nn.Parameter(new_embed)
-
-    return model
+    longformer.embeddings.word_embeddings.num_embeddings = current_vocab_size + 4
+    del longformer.embeddings.word_embeddings.weight
+    longformer.embeddings.word_embeddings.weight = torch.nn.Parameter(new_embed)
+    print("Loaded model")
+    print(longformer)
+    return longformer
+    
 
 def load_distilroberta(model_name='distilbert/distilroberta-base'):
     
@@ -234,7 +266,6 @@ def load_distilroberta(model_name='distilbert/distilroberta-base'):
     del model.embeddings.word_embeddings.weight
     model.embeddings.word_embeddings.weight = torch.nn.Parameter(new_embed)
     print("Loaded model")
-    print(model)
     return model
 
 
@@ -316,8 +347,8 @@ class WikihopQAModel(nn.Module):
     def __init__(self):
         super(WikihopQAModel, self).__init__()
 
-        self.distil_roberta = load_distilroberta("distilbert/distilroberta-base")
-        self.answer_score = torch.nn.Linear(self.distil_roberta.embeddings.word_embeddings.weight.shape[1], 1, bias=False)
+        self.longformer = load_longformer()
+        self.answer_score = torch.nn.Linear(self.longformer.embeddings.word_embeddings.weight.shape[1], 1, bias=False)
         self.loss = torch.nn.CrossEntropyLoss(reduction='sum')
         self._truncate_seq_len = 100000000000
             
@@ -333,11 +364,11 @@ class WikihopQAModel(nn.Module):
             answer_index = (1, ) with the index of the correct answer
         """
         candidate_ids, support_ids, prediction_indices, correct_prediction_index = data
-        activations = get_activations_roberta(
-            self.distil_roberta,
+        activations = get_activations_longformer(
+            self.longformer,
             candidate_ids,
             support_ids,
-            512,
+            2048,
             self._truncate_seq_len)
         
         prediction_activations = [act.index_select(1, prediction_indices) for act in activations] # [batch_size, num_candidates, hidden_size]
@@ -386,8 +417,8 @@ if __name__ == "__main__":
     val_dataset = WikihopQADataset("data/wikihop/dev.tokenized_2048.json", shuffle_candidates=False, tokenize=False)
         
     #select only 1000 instances for training
-    train_dataset.instances = train_dataset.instances[:1000]
-    val_dataset.instances = val_dataset.instances[:100] 
+    #train_dataset.instances = train_dataset.instances[:1000]
+    #val_dataset.instances = val_dataset.instances[:100] 
     
     # batch size = 1 but we accumulate gradients
     train_loader = DataLoader(train_dataset, batch_size=1, shuffle=True, collate_fn=WikihopQADataset.collate_single_item)
@@ -417,10 +448,11 @@ if __name__ == "__main__":
         scheduler=scheduler,
         compute_metrics=compute_accuracy,
         logger="wandb",
-        log=False,
+        log=True,
         max_epochs=epochs,
         use_mixed_precision=True,
         gradient_accumulation_steps=1, 
+        evaluate_first=True,
         warmup_steps=100,
         val_check_interval=10,
         project_name="WikihopQA",

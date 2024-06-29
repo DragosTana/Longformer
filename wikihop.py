@@ -46,7 +46,6 @@ def get_wikihop_roberta_tokenizer(tokenizer_name='roberta-base'):
 
     return tokenizer
 
-
 def preprocess_wikihop(infile, tokenizer_name='roberta-large', sentence_tokenize=False):
     import nltk
     nltk.download('punkt')
@@ -177,21 +176,104 @@ class WikihopQADataset(Dataset):
         # candidate_ids, support_ids, prediction_indices, correct_prediction_index
         return torch.tensor(candidate_ids), torch.tensor(support_ids), torch.tensor(predicted_indices), torch.tensor([answer_index])
 
+def pad_to_max_length(input_ids, attention_mask, max_length, pad_token_id):
+    """
+    Pad input_ids and attention_mask to max_length
+    """
+    padding_length = max_length - input_ids.size(1)
+    assert padding_length == max_length - attention_mask.size(1)
+    if padding_length > 0:
+        input_ids = torch.nn.functional.pad(input_ids, (0, padding_length), value=pad_token_id)
+        attention_mask = torch.nn.functional.pad(attention_mask, (0, padding_length), value=0)
+    return input_ids, attention_mask
+
+def get_blocked_inputs(candidate_ids, support_ids, max_seq_len, truncate_seq_len):
+    """
+    Handle the case where the input is too long for the model.
+    """
+    candidate_len = candidate_ids.shape[1]
+    support_len = support_ids.shape[1]
+    if candidate_len + support_len <= max_seq_len:
+        token_ids = torch.cat([candidate_ids, support_ids], dim=1)
+        attention_mask = torch.ones(token_ids.shape, dtype=torch.long, device=token_ids.device)
+        token_ids, attention_mask = pad_to_max_length(
+            token_ids, attention_mask, max_seq_len, 1)
+        return [token_ids], [attention_mask]
+    else:
+        all_tokens = []
+        all_attention_masks = []
+        available_support_len = max_seq_len - candidate_len
+        for start in range(0, support_len, available_support_len):
+            end = min(start + available_support_len, support_len, truncate_seq_len)
+            token_ids = torch.cat([candidate_ids, support_ids[:, start:end]], dim=1)
+            attention_mask = torch.ones(token_ids.shape, dtype=torch.long, device=token_ids.device)
+            token_ids, attention_mask = pad_to_max_length(
+                token_ids, attention_mask, max_seq_len, 1)
+            all_tokens.append(token_ids)
+            all_attention_masks.append(attention_mask)
+            if end == truncate_seq_len:
+                break
+        return all_tokens, all_attention_masks
+
 
 if __name__ == '__main__':
+    from torch.utils.data import DataLoader
 
     wikihop_train = WikihopQADataset(filepath='./data/wikihop/train.tokenized.json', 
-                                     shuffle_candidates=True, 
+                                     shuffle_candidates=False, 
                                      tokenize=False, 
                                      tokenizer_name='distilbert/distilroberta-base',
                                      sentence_tokenize=False)
+    dataloader = DataLoader(wikihop_train, batch_size=1, shuffle=False, collate_fn=WikihopQADataset.collate_single_item)
+    example = next(iter(dataloader))
+    candidate_ids, support_ids, predicted_indices, correct_prediction_index = example
     
-    print(wikihop_train[0])
-    #decode 
-    print(wikihop_train._tokenizer.decode(wikihop_train[0][0]))
-    print(wikihop_train._tokenizer.decode(wikihop_train[0][1]))
-    print(wikihop_train[0][2])
-    print(wikihop_train[0][3])
-
-
+    # Decode batch
+    print("Candidate ids:")
+    print(wikihop_train._tokenizer.decode(candidate_ids[0]))
     
+    print("\nSupport ids:")
+    print(wikihop_train._tokenizer.decode(support_ids[0]))
+    
+    print("\nPredicted indices:")
+    print(predicted_indices)
+    
+    print("\nCorrect prediction index:")
+    print(correct_prediction_index.item())
+    
+    # Extract and decode all answers
+    answer_spans = []
+    for i in range(len(predicted_indices) - 1):
+        start = predicted_indices[i].item()
+        end = predicted_indices[i+1].item()
+        answer_spans.append((start, end))
+    answer_spans.append((predicted_indices[-1].item(), predicted_indices[-1].item()+3)) # 3 is a random number
+     
+    print("\nAll answers:")
+    for start, end in answer_spans:
+        answer = candidate_ids[0][start:end]  
+        print(wikihop_train._tokenizer.decode(answer))
+    
+    # Extract and decode the correct answer
+    correct_index = correct_prediction_index.item()
+    start_correct_answer = predicted_indices[correct_index].item()
+    end_correct_answer = predicted_indices[correct_index+1].item()
+    
+    print("\nCorrect answer:")
+    correct_answer = candidate_ids[0][start_correct_answer:end_correct_answer] 
+    print(wikihop_train._tokenizer.decode(correct_answer))
+    
+    print("Total length of the input:", len(candidate_ids[0]) + len(support_ids[0]))
+    
+    
+    input_ids, attention_mask = get_blocked_inputs(candidate_ids, support_ids, max_seq_len=512, truncate_seq_len=100000)
+    #print("\nInput ids:")
+    #print(input_ids)
+    #print("\nAttention mask:")
+    #print(attention_mask)
+    
+    # decode the input_ids
+    print("\nDecoded input ids:")
+    for i, ids in enumerate(input_ids):
+        print(wikihop_train._tokenizer.decode(ids[0]))
+        

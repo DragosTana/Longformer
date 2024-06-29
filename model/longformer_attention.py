@@ -1,4 +1,4 @@
-from torch import nn
+
 try:
     from sliding_chunks import  sliding_chunks_matmul_qk, sliding_chunks_matmul_pv, \
                                 sliding_chunks_no_overlap_matmul_qk, sliding_chunks_no_overlap_matmul_pv, \
