@@ -1,13 +1,14 @@
 import torch
 import math
 from torch import nn
-from typing import Optional, Tuple, List
+from typing import Optional, Tuple
 from torch.nn.functional import gelu
 
 try:
     from .activations import get_activation
 except ImportError:
     from activations import get_activation
+
 
 
 class RobertaEmbeddings(nn.Module):
@@ -41,7 +42,7 @@ class RobertaEmbeddings(nn.Module):
         embeddings = self.dropout(embeddings)
         return embeddings
         
-
+        
 class RobertaSelfAttention(nn.Module):
     def __init__(self, config):
         super().__init__()
@@ -93,6 +94,7 @@ class RobertaSelfAttention(nn.Module):
         
         return outputs
     
+    
 class RobertaSelfOutput(nn.Module):
     def __init__(self, config):
         super().__init__()
@@ -105,6 +107,7 @@ class RobertaSelfOutput(nn.Module):
         hidden_states = self.dropout(hidden_states)
         hidden_states = self.LayerNorm(hidden_states + input_tensor)
         return hidden_states
+        
         
 class RobertaAttention(nn.Module):
     def __init__(self, config):
@@ -127,6 +130,7 @@ class RobertaAttention(nn.Module):
         outputs = (attention_output,) + self_outputs[1:]  # add attentions if we output them
         return outputs     
         
+        
 class RobertaIntermediate(nn.Module):
     def __init__(self, config):
         super().__init__()
@@ -141,6 +145,7 @@ class RobertaIntermediate(nn.Module):
         hidden_states = self.intermediate_act_fn(hidden_states)
         return hidden_states
 
+
 class RobertaOutput(nn.Module):
     def __init__(self, config):
         super().__init__()
@@ -153,6 +158,7 @@ class RobertaOutput(nn.Module):
         hidden_states = self.dropout(hidden_states)
         hidden_states = self.LayerNorm(hidden_states + input_tensor)
         return hidden_states
+    
     
 class RobertaLayer(nn.Module):
     def __init__(self, config):
@@ -179,6 +185,7 @@ class RobertaLayer(nn.Module):
         layer_output = self.output(intermediate_output, attention_output)
         outputs = (layer_output,) + output
         return outputs
+    
     
 class RobertaEncoder(nn.Module):
     def __init__(self, config):
@@ -215,6 +222,7 @@ class RobertaEncoder(nn.Module):
             
         return (hidden_states, all_hidden_states, all_self_attentions)
         
+        
 class RobertaPooler(nn.Module):
     def __init__(self, config):
         super().__init__()
@@ -226,6 +234,7 @@ class RobertaPooler(nn.Module):
         pooled_output = self.dense(first_token_tensor)
         pooled_output = self.activation(pooled_output)
         return pooled_output
+
 
 class RobertaModel(nn.Module):
     def __init__(self, config, add_pooling_layer=True):
@@ -267,6 +276,7 @@ class RobertaModel(nn.Module):
         pooled_output = self.pooler(sequence_output) if self.pooler is not None else None
         
         return (sequence_output, pooled_output) + encoder_outputs[1:]
+    
     
 class RobertaLMHead(nn.Module):
     """Roberta Head for masked language modeling."""
@@ -310,6 +320,24 @@ class RobertaForMaskedLM(nn.Module):
         logits = self.lm_head(sequence_output)  
         
         return logits
+
+    def train_step(self, batch):
+        input_ids = batch['input_ids']
+        attention_mask = batch['attention_mask']
+        labels = batch['labels']
+        outputs = self(input_ids, attention_mask)
+        loss_function = nn.CrossEntropyLoss()
+        loss = loss_function(outputs.view(-1, outputs.size(-1)), labels.view(-1))
+        return loss, outputs
+    
+    def test_step(self, batch):
+        input_ids = batch['input_ids']
+        attention_mask = batch['attention_mask']
+        labels = batch['labels']
+        outputs = self(input_ids, attention_mask)
+        loss_function = nn.CrossEntropyLoss()
+        loss = loss_function(outputs.view(-1, outputs.size(-1)), labels.view(-1))
+        return loss, outputs
 
 class RobertaClassificationHead(nn.Module):
     """Head for sentence-level classification tasks."""
@@ -386,46 +414,5 @@ class RobertaForSequenceClassification(nn.Module):
         loss = nn.CrossEntropyLoss()(outputs.view(-1, self.num_labels), labels.view(-1))
         return loss, outputs
 
-if __name__ == "__main__":
-    from transformers import RobertaConfig
-    config = RobertaConfig(
-        vocab_size=50265,
-        max_position_embeddings=514,
-        hidden_size=768,
-        num_attention_heads=12,
-        num_hidden_layers=6,
-        type_vocab_size=1,
-        hidden_dropout_prob=0.0,
-        attention_probs_dropout_prob=0.0,
-        dropout = 0.0,
-    )
 
-    model = RobertaForSequenceClassification(config)
-    print(model)
-    optimizer = torch.optim.Adam(model.parameters(), lr=5e-05, betas=(0.9, 0.999))
-    
-    
-    batch_size = 2
-    seq_length = 512
-    input_ids = torch.randint(0, 50265, (batch_size, seq_length))
-    attention_mask = torch.ones(input_ids.shape)
-    attention_mask[0, -100:] = 0
-    
-    outputs = model(input_ids, attention_mask=attention_mask)
-    print(f"outputs: {outputs.size()}")
-    print(f"outputs: {outputs}")
-    
-    target = torch.randint(0, 2, (batch_size,))
-    loss = nn.CrossEntropyLoss()(outputs, target)
-    
-    for name, param in model.named_parameters():
-        assert param.grad is None
-    
-    loss.backward()
-    optimizer.step()
-    
-    for name, param in model.named_parameters():
-        assert param.grad is not None
- 
-    
     

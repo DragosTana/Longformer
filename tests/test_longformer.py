@@ -1,15 +1,17 @@
 import unittest
 import torch
 import torch.nn as nn
-
 import os
 import sys
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-sys.path.append(os.path.dirname(SCRIPT_DIR))
 
-from model.longformer import Longformer, LongformerForMaskedLM, LongformerForSequenceClassification
-from model.config import LongformerConfig
-from model.sliding_chunks import pad_to_window_size
+# ugly hack to allow imports from parallel directories
+path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../src/models'))
+if path not in sys.path:
+    sys.path.insert(0, path)
+
+from longformer import Longformer, LongformerForMaskedLM, LongformerForSequenceClassification
+from config import LongformerConfig
+from sliding_chunks import pad_to_window_size
 
 class TestLongformer(unittest.TestCase):
     
@@ -20,17 +22,15 @@ class TestLongformer(unittest.TestCase):
                                       num_hidden_layers=6,
                                       hidden_size=768,
                                       num_attention_heads=12,
-                                      max_position_embeddings=514,
-                                      attention_window=[16]*6,
-                                      attention_dilation=[1]*6)
+                                      max_position_embeddings=2050,
+                                      attention_window=[256]*6)
         
         cls.config_classification = LongformerConfig(vocab_size=30522,
                                                      num_hidden_layers=6,
                                                      hidden_size=768,
                                                      num_attention_heads=12,
-                                                     max_position_embeddings=514,
-                                                     attention_window=[16]*6,
-                                                     attention_dilation=[1]*6, 
+                                                     max_position_embeddings=2050,
+                                                     attention_window=[256]*6,
                                                      num_labels=2)
         cls.max_position_embeddings = cls.config.max_position_embeddings - 2
         #cls.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")

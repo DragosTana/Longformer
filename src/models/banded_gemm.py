@@ -72,7 +72,7 @@ def _chunk(x, w):
     return x.as_strided(size=chunk_size, stride=chunk_stride)
 
 
-def sliding_chunks_matmul_qk(q: torch.Tensor, k: torch.Tensor, w: int, padding_value: float):
+def banded_gemm_qk(q: torch.Tensor, k: torch.Tensor, w: int, padding_value: float):
     '''Matrix multiplicatio of query x key tensors using with a sliding window attention pattern.
     This implementation splits the input into overlapping chunks of size 2w (e.g. 512 for pretrained Longformer)
     with an overlap of size w'''
@@ -81,28 +81,12 @@ def sliding_chunks_matmul_qk(q: torch.Tensor, k: torch.Tensor, w: int, padding_v
     assert q.size() == k.size()
 
     chunks_count = seqlen // w - 1
-
-    # group bsz and num_heads dimensions into one, then chunk seqlen into chunks of size w * 2
     q = q.transpose(1, 2).reshape(bsz * num_heads, seqlen, head_dim)
     k = k.transpose(1, 2).reshape(bsz * num_heads, seqlen, head_dim)
-
     chunk_q = _chunk(q, w)
     chunk_k = _chunk(k, w)
-
-    # matrix multipication
-    # bcxd: bsz*num_heads x chunks x 2w x head_dim
-    # bcyd: bsz*num_heads x chunks x 2w x head_dim
-    # bcxy: bsz*num_heads x chunks x 2w x 2w
     chunk_attn = torch.einsum('bcxd,bcyd->bcxy', (chunk_q, chunk_k))  # multiply
-
-    # convert diagonals into columns
     diagonal_chunk_attn = _skew(chunk_attn, direction=(0, 0, 0, 1), padding_value=padding_value)
-
-    # allocate space for the overall attention matrix where the chunks are compined. The last dimension
-    # has (w * 2 + 1) columns. The first (w) columns are the w lower triangles (attention from a word to
-    # w previous words). The following column is attention score from each word to itself, then
-    # followed by w columns for the upper triangle.
-
     diagonal_attn = diagonal_chunk_attn.new_empty((bsz * num_heads, chunks_count + 1, w, w * 2 + 1))
 
     # copy parts from diagonal_chunk_attn into the compined matrix of attentions
@@ -120,60 +104,7 @@ def sliding_chunks_matmul_qk(q: torch.Tensor, k: torch.Tensor, w: int, padding_v
     return diagonal_attn
 
 
-def _chunk_mio(x, w):
-    '''convert into overlapping chunkings. Chunk size = 2w, overlap size = w'''
-
-    chunk_size = 2 * w
-    overlap_size = w
-    stride = chunk_size - overlap_size
-    unfolded = x.unfold(1, chunk_size, stride)
-    return unfolded
-
-
-def sliding_chunks_matmul_qk_mio(q: torch.Tensor, k: torch.Tensor, w: int, padding_value: float):
-    '''Matrix multiplicatio of query x key tensors using with a sliding window attention pattern.
-    This implementation splits the input into overlapping chunks of size 2w (e.g. 512 for pretrained Longformer)
-    with an overlap of size w'''
-    bsz, seqlen, num_heads, head_dim = q.size()
-    assert seqlen % (w * 2) == 0
-    assert q.size() == k.size()
-
-    chunks_count = seqlen // w - 1
-
-    # group bsz and num_heads dimensions into one, then chunk seqlen into chunks of size w * 2
-    q = q.transpose(1, 2).reshape(bsz * num_heads, seqlen, head_dim)
-    k = k.transpose(1, 2).reshape(bsz * num_heads, seqlen, head_dim)
-
-    # chunk q and k into chunks of size 2w with an overlap of size w
-    q=q.unfold(1, 2*w, w)                                 #[bsz*num_heads; chunks; head_dim; 2w]
-    k=k.unfold(1, 2*w, w)                                 #[bsz*num_heads; chunks; head_dim; 2w]
-    chunk_attn = torch.matmul(q.transpose(-2, -1), k)   #[bsz*num_heads; chunks; 2w; 2w]
-    # convert diagonals into columns
-    diagonal_chunk_attn = _skew(chunk_attn, direction=(0, 0, 0, 1), padding_value=padding_value)
-
-    # allocate space for the overall attention matrix where the chunks are compined. The last dimension
-    # has (w * 2 + 1) columns. The first (w) columns are the w lower triangles (attention from a word to
-    # w previous words). The following column is attention score from each word to itself, then
-    # followed by w columns for the upper triangle.
-
-    diagonal_attn = diagonal_chunk_attn.new_empty((bsz * num_heads, chunks_count + 1, w, w * 2 + 1))
-
-    # copy parts from diagonal_chunk_attn into the compined matrix of attentions
-    # - copying the main diagonal and the upper triangle
-    diagonal_attn[:, :-1, :, w:] = diagonal_chunk_attn[:, :, :w, :w + 1]
-    diagonal_attn[:, -1, :, w:] = diagonal_chunk_attn[:, -1, w:, :w + 1]
-    # - copying the lower triangle
-    diagonal_attn[:, 1:, :, :w] = diagonal_chunk_attn[:, :, - (w + 1):-1, w + 1:]
-    diagonal_attn[:, 0, 1:w, 1:w] = diagonal_chunk_attn[:, 0, :w - 1, 1 - w:]
-
-    # separate bsz and num_heads dimensions again
-    diagonal_attn = diagonal_attn.view(bsz, num_heads, seqlen, 2 * w + 1).transpose(2, 1)
-
-    mask_invalid_locations(diagonal_attn, w, 1)
-    return diagonal_attn
-
-
-def sliding_chunks_matmul_pv(prob: torch.Tensor, v: torch.Tensor, w: int):
+def banded_gemm_pv(prob: torch.Tensor, v: torch.Tensor, w: int):
     '''Same as sliding_chunks_matmul_qk but for prob and value tensors. It is expecting the same output
     format from sliding_chunks_matmul_qk'''
     bsz, seqlen, num_heads, head_dim = v.size()
@@ -221,70 +152,6 @@ def pad_to_window_size(input_ids: torch.Tensor, attention_mask: torch.Tensor,
     return input_ids, attention_mask
 
 
-# ========= "sliding_chunks_no_overlap": alternative implemenation of the sliding window attention =========
-# This implementation uses non-overlapping chunks (or blocks) of size `w` with number of local attention = 3xw
-# To make this implemenation comparable to "sliding_chunks" set w such that
-#       w_of_sliding_chunks_no_overlap = w_of_sliding_chunks * 2 / 3
-# For example,
-#    w_of_sliding_chunks = 256 (this is one sided. Total attention size = 512)
-#    w_of_sliding_chunks_no_overlap = 170 (Total attention size = 510)
-# Performance:
-# - Speed: 30% faster than "sliding_chunks"
-# - Memory: 95% of the memory usage of "sliding_chunks"
-# The windows are asymmetric where number of attention on each side of a token ranges between w to 2w
-# while "sliding_chunks" has a symmetric window around each token.
-
-
-def sliding_chunks_no_overlap_matmul_qk(q: torch.Tensor, k: torch.Tensor, w: int, padding_value: float):
-    bsz, seqlen, num_heads, head_dim = q.size()
-    assert seqlen % w == 0
-    assert q.size() == k.size()
-    # chunk seqlen into non-overlapping chunks of size w
-    chunk_q = q.view(bsz, seqlen // w, w, num_heads, head_dim)
-    chunk_k = k.view(bsz, seqlen // w, w, num_heads, head_dim)
-    chunk_k_expanded = torch.stack((
-        F.pad(chunk_k[:, :-1], (0, 0, 0, 0, 0, 0, 1, 0), value=0.0),
-        chunk_k,
-        F.pad(chunk_k[:, 1:], (0, 0, 0, 0, 0, 0, 0, 1), value=0.0),
-    ), dim=-1)
-    diagonal_attn = torch.einsum('bcxhd,bcyhde->bcxhey', (chunk_q, chunk_k_expanded))  # multiply
-    return diagonal_attn.reshape(bsz, seqlen, num_heads, 3 * w)
-
-
-def sliding_chunks_no_overlap_matmul_pv(prob: torch.Tensor, v: torch.Tensor, w: int):
-    bsz, seqlen, num_heads, head_dim = v.size()
-    chunk_prob = prob.view(bsz, seqlen // w, w, num_heads, 3, w)
-    chunk_v = v.view(bsz, seqlen // w, w, num_heads, head_dim)
-    chunk_v_extended = torch.stack((
-        F.pad(chunk_v[:, :-1], (0, 0, 0, 0, 0, 0, 1, 0), value=0.0),
-        chunk_v,
-        F.pad(chunk_v[:, 1:], (0, 0, 0, 0, 0, 0, 0, 1), value=0.0),
-    ), dim=-1)
-    context = torch.einsum('bcwhpd,bcdhep->bcwhe', (chunk_prob, chunk_v_extended))
-    return context.reshape(bsz, seqlen, num_heads, head_dim)
-
-def sliding_window_attention(query, key, window_size):
-    batch_size, seq_len, num_heads, dim = query.size()
-    # Create a padded version of `key` to handle boundaries
-    padding = window_size
-    key_padded = F.pad(key, (0, 0, padding, padding), "constant", 0)  # Padding both sides in the sequence dimension
-
-    # Use unfold to create sliding windows over the padded key tensor
-    # [batch_size, num_heads, seq_len, 2 * window_size + 1, dim]
-    key_windows = key_padded.unfold(dimension=1, size=2 * window_size + 1, step=1).transpose(2, 1)
-    
-    # Expand query for multiplication to match key windows shape
-    query_expanded = query.unsqueeze(3)  # Adding an extra dimension for broadcasting
-
-    # Compute dot products
-    # Transpose key_windows to get correct dimensions for matmul: [batch_size, num_heads, seq_len, dim, 2 * window_size + 1]
-    dot_products = torch.matmul(query_expanded, key_windows.transpose(3, 4))
-
-    # Remove the unnecessary dimension and scale the dot products
-    dot_products = dot_products.squeeze(3)  # [batch_size, num_heads, seq_len, 2 * window_size + 1]
-
-    return dot_products
-
 def indicies_matmul(q, k):
     result = torch.zeros((1, q.size(1), q.size(2), q.size(2)))
     for chuck in range(q.size(1)):
@@ -294,8 +161,6 @@ def indicies_matmul(q, k):
                 jth = k[0, chuck, j].item()
                 string = str(ith) + str(jth)
                 result[0, chuck, i, j] = int(string)
-                
-    
     return result
 
 def visualize_attention():
@@ -321,6 +186,9 @@ def visualize_attention():
     
     print("After matmul: ")
     print(result)
+    
+    print("padding: ")
+    print(F.pad(result, (0, 0, 0, 1), value=0))
     
     skewd = _skew(result, direction=(0, 0, 0, 1), padding_value=0)
     
@@ -366,27 +234,10 @@ def visualize_attention():
     print("Final attention: ")
     print(diagonal_attn)
     
-def test_time_diff():
-    import time
-    batch_size = 16
-    seq_len = 2048
-    num_heads = 16
-    head_dim = 12
-    w = 128
-    padding_value = -1e4
-    query = torch.randn(batch_size, seq_len, num_heads, head_dim)
-    key = torch.randn(batch_size, seq_len, num_heads, head_dim)
-    query = query.cuda()
-    key = key.cuda()
     
-    total_time = 0
-    for i in range(10):
-        start = time.time()
-        result = sliding_chunks_matmul_qk_mio(query, key, w, padding_value)
-        end = time.time()
-        total_time += end - start
-        
-    print("average time: ", total_time / 10)
+    print("------------------------------------------------------")
+    print(_get_invalid_locations_mask_fixed_dilation(8, 2, 1))
+
     
 if __name__ == "__main__":
     visualize_attention()

@@ -1,14 +1,20 @@
 import unittest
 import torch
-import torch.nn as nn
 import os
 import sys
 
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-sys.path.append(os.path.dirname(SCRIPT_DIR))
+# ugly hack to allow imports from parallel directories
+path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../src/models'))
+if path not in sys.path:
+    sys.path.insert(0, path)
 
-from model.roberta import MyRobertaEmbeddings, MyRobertaAttention, MyRobertaLayer, MyRobertaEncoder, \
-                            MyRobertaModel, MyRobertaForMaskedLM, MyRobertaForSequenceClassification
+from roberta import RobertaEmbeddings as MyRobertaEmbeddings
+from roberta import RobertaAttention as MyRobertaAttention
+from roberta import RobertaLayer as MyRobertaLayer
+from roberta import RobertaEncoder as MyRobertaEncoder
+from roberta import RobertaModel as MyRobertaModel
+from roberta import RobertaForMaskedLM as MyRobertaForMaskedLM
+from roberta import RobertaForSequenceClassification as MyRobertaForSequenceClassification
 from transformers import RobertaConfig, RobertaModel, RobertaForMaskedLM, RobertaForSequenceClassification
 
 class TestRobertaComponents(unittest.TestCase):

@@ -2,9 +2,9 @@ import torch
 import torch.nn as nn
 from typing import Optional
 try:
-    from .activations import get_activation
-except ImportError:
     from activations import get_activation
+except ImportError:
+    from src.activations import get_activation
 
 class SinusoidalPositionalEmbedding(nn.Module):
     """

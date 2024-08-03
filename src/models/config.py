@@ -1,8 +1,3 @@
-"""
-@Author : Dragos Tanasa
-@When : 15.01.2024
-@Description : This file contains the implementation of the configuration object for the models
-"""
 from typing import List
 from transformers.configuration_utils import PretrainedConfig
 
@@ -96,19 +91,14 @@ class LongformerConfig(RobertaConfig):
         - attention_mode: 'n2' for regular n^2 self-attention, 'tvm' for TVM implemenation of Longformer
             selfattention, 'sliding_chunks' for another implementation of Longformer selfattention
     """
-    __doc__ += RobertaConfig.__doc__
-    
     def __init__(
-        self, attention_window: List[int] = None, 
-        attention_dilation: List[int] = None,
-        autoregressive: bool = False, 
-        attention_mode: str = 'sliding_chunks', 
+        self, 
+        attention_window: List[int] = None,
+        attention_mode: str = 'sliding_chunks',
         **kwargs,
     ):
 
         super().__init__(**kwargs)
         self.attention_window = attention_window
-        self.attention_dilation = attention_dilation
-        self.autoregressive = autoregressive
         self.attention_mode = attention_mode
-        assert self.attention_mode in ['sliding_chunks', 'n2', 'sliding_chunks_no_overlap']
+        assert self.attention_mode in ['n2','sliding_chunks'], f"attention_mode should be 'n2' or 'sliding_chunks'"

@@ -1,18 +1,65 @@
 # Longformer: the long-document Transformer
 
-![Transformers](/doc/imgs/dbl5lu1-528855a2-d961-4e5d-b7eb-b088db142382.jpg)
+## Pretrainnig
+This script is designed for pre-training a Long-RoBERTa model. It supports the WikiText103 dataset for language modeling tasks and allows for flexible configuration of various hyperparameters.
 
-Despite the name, this aims to be yet another PyTorch implementation of a [Transformer](https://arxiv.org/abs/1706.03762) architecture. However, the focus is on implementing and reproducing at least some of the experiments from the paper [Longformer: The Long-Document Transformer](https://arxiv.org/abs/2004.05150) reducing when needed (always) the dimensions of the datasets and of the models.
+`python pretriaing.py --tokenizer_name <TOKENIZER_NAME> [other optional arguments]`
 
-## Implementation note:
+- --tokenizer_name: The name of the tokenizer to use. Default is "distilbert/distilroberta-base".
+- --max_seq_len: The maximum sequence length for tokenization. Default is 2048.
+- --num_workers: The number of workers for data loading. Default is 16.
+- --cache_dir: Directory to cache the dataset. Default is "./data".
+- --batch_size: The batch size for training and evaluation. Default is 1.
+- --save_model_to: Directory to save the converted model. Default is "./data/long_model".
+- --attention_window: The attention window size for Longformer. Default is 512.
+- --max_pos: The maximum position embeddings for Longformer. Default is 2048.
+- --state_dict_path: Path to the state dictionary file. Default is "./data/long_model/model.safetensors".
+- --epochs: The number of training epochs. Default is 10.
+- --warmup_steps: The number of warmup steps for learning rate scheduler. Default is 500.
+- --gradient_accumulation_steps: The number of steps to accumulate gradients before updating the model parameters. Default is 8.
+- --lr: The learning rate for the optimizer. Default is 5e-5.
+- --default_root_dir: The root directory for saving logs and checkpoints. Default is "./model/".
+- --val_check_interval: The interval at which to validate the model during training. Default is 500.
+- --project_name: The project name for logging purposes (e.g., using Weights and Biases). Default is "Pretraining".
 
-I used the Huggingface [Transformer](https://github.com/huggingface/transformers) library as a reference. When possible, however, I implemented things from scratch. Hugging Face was used just for:
+## Classification
+This script allows for training and evaluating text classification models using either the RoBERTa or Longformer architectures on specified datasets. The primary datasets supported are IMDB and Hyperpartisan, which cater to sentiment analysis and hyperpartisan news detection tasks, respectively.
+To run:
 
-- **I/O of the training data**: Pretraining requires big datasets, which are difficult and slow to handle on consumer grade machines. Huggingface provides the [Wikipedia](https://huggingface.co/datasets/wikipedia) dataset in a format that is already memory-mapped relieving me of the burden of having to implement this part from scratch.
-- **Tokenizers**: Huggingface already has several implemented tokenizers, many of which are trained on the same dataset I use. Furthermore, the [fast-tokenizers](https://huggingface.co/learn/nlp-course/en/chapter6/3) are implemented in Rust making them much faster than anything I could have implemented from scratch in Python.
-- **Pretrained models**: All models are implemented from scratch in PyTorch but are compatible with the weights of the pretrained models Hugging Face provides (at least [DistilBERTModel](/model/distil_bert.py/) is).
+`python3 classification.py --dataset <DATASET> --model <MODEL> [other optional arguments]`
 
+- --dataset: The dataset to use for training. Choices are "IMDB" or "Hyperpartisan". Default is "Hyperpartisan".
+- --model: The model architecture to use. Choices are "Roberta" or "Longformer". Default is "Roberta".
+- --model_path: Path to the model weights file. This is required if using the Longformer model. Default is None.
+- --batch_size: The batch size for training and evaluation. Default is 8.
+- -lr: The learning rate for the optimizer. Default is 5e-5.
+- --epochs: The number of training epochs. Default is 3.
+- --gradient_accumulation_steps: The number of steps to accumulate gradients before updating the model parameters. Default is 1.
+- --default_root_dir: The root directory for saving logs and checkpoints. Default is "./logs".
+- --val_check_interval: The interval at which to validate the model during training. Default is 200.
+- --project_name: The project name for logging purposes (e.g., using Weights and Biases). Default is "Classification".
 
-## Methodological note:
+### Note
+- For Longformer, you must specify the --model_path argument with the path to the model's weight file. If you don't have one please use the pretrain script first
+- Logs and checkpoints will be saved in the directory specified by --default_root_dir.
+- The script uses the Weights and Biases (wandb) library for logging. Ensure you have an account and are logged in to use this feature effectively.
 
-I was asked to implement a Longformer and reproduce at least some of the results from the paper
+## Question Answering
+
+This script is designed for training and evaluating a model for the WikiHop QA task. It supports both RoBERTa and Longformer architectures, providing flexibility for handling long documents.
+
+`python <script_name>.py --train_data <TRAIN_DATA> --val_data <VAL_DATA> [other optional arguments]`
+
+- --train_data: Path to the training data file. Default is "data/wikihop/train.tokenized_2048.json".
+- --val_data: Path to the validation data file. Default is "data/wikihop/dev.tokenized_2048.json".
+- --longformer: Boolean flag to indicate if Longformer should be used. Default is False.
+- --model_path: Path to the model weights file. Default is "./checkpoint-3000/model.safetensors".
+- --lr: The learning rate for the optimizer. Default is 3e-5.
+- --weight_decay: The weight decay for the optimizer. Default is 0.01.
+- --epochs: The number of training epochs. Default is 5.
+- --default_root_dir: The root directory for saving logs and checkpoints. Default is "./model/".
+- --val_check_interval: The interval at which to validate the model during training. Default is 10.
+- --project_name: The project name for logging purposes. Default is "WikihopQA".
+
+### Note
+- Here the dataset will not automatically download if it is not present on your machine. Please download it from the following [link](https://zenodo.org/records/6407402).

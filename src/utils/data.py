@@ -1,11 +1,9 @@
 from torch.utils.data import Dataset
-from transformers import AutoTokenizer, LongformerForMaskedLM
+from transformers import AutoTokenizer
 from datasets import load_dataset
-from sklearn.model_selection import train_test_split
 import torch
 from copy import copy
 import re
-import tqdm
 
 class WikiDataset(Dataset):
     """
@@ -227,13 +225,74 @@ class Hyperpartisan(Dataset):
         test_size = len(self) - train_size
         return torch.utils.data.random_split(self, [train_size, test_size])
     
-if __name__ == "__main__":
+class WikiText103(Dataset):
+    def __init__(self,
+                 tokenizer_name: str = "distilbert/distilroberta-base",
+                 max_seq_len: int = 512,
+                 num_workers: int = 16,
+                 cache_dir: str = "../data", 
+                 shuffle: bool = False,
+                 n_docs: int = None,
+                ): 
+        self.tokenizer_name = tokenizer_name
+        self.max_seq_len = max_seq_len
+        self.num_workers = num_workers
+        self.cache_dir = cache_dir
+        self.shuffle = shuffle
+        self.n_docs = n_docs
     
-    data = Hyperpartisan(tokenizer_name="distilbert/distilroberta-base",
-                            max_seq_len=2048, 
-                            num_workers=16, 
-                            cache_dir="./data", 
-                            shuffle=True, 
-                            longformer=True,
-                            )
-    print(data[0])
+        if type(self.tokenizer_name) == str:
+            self.tokenizer = AutoTokenizer.from_pretrained(self.tokenizer_name, use_fast=True, return_tensors="pt")
+        else:
+            self.tokenizer = self.tokenizer_name
+            
+        self.data = self._raw_text_to_tokens()
+        print("WikiText-103 dataset loaded and tokenized!")
+        
+    def _group_texts(self, examples):
+        concatenated_examples = {k: sum(examples[k], []) for k in examples.keys()}
+        total_length = len(concatenated_examples[list(examples.keys())[0]])
+        padding_length = 0
+        remainder = total_length % self.max_seq_len
+        if remainder != 0:
+            padding_length = self.max_seq_len - remainder
+            for k, t in concatenated_examples.items():
+                concatenated_examples[k] = t + [self.tokenizer.pad_token_id] * padding_length
+            total_length += padding_length
+            concatenated_examples["attention_mask"][-padding_length:] = [0] * padding_length
+        result = {
+            k: [t[i : i + self.max_seq_len] for i in range(0, total_length, self.max_seq_len)]
+            for k, t in concatenated_examples.items()
+        }
+        return result
+    
+    def _preprocess_data(self, data):
+        return self.tokenizer(["".join(x) for x in data["text"]]) 
+    
+    def _raw_text_to_tokens(self):
+        print("Loading WikiText-103 dataset...")
+        raw_data = load_dataset("Salesforce/wikitext", 
+                        "wikitext-103-raw-v1",
+                        trust_remote_code=True, 
+                        num_proc=self.num_workers,
+                        cache_dir=self.cache_dir)
+
+        text_data = raw_data.map(self._preprocess_data, batched=True, num_proc=self.num_workers, remove_columns=["text"])
+        dataset = text_data.map(self._group_texts, batched=True, num_proc=self.num_workers)
+        return dataset
+    
+    def __len__(self):
+        return len(self.data["train"])
+    
+    def __getitem__(self, idx):
+        return self.data[idx]
+    
+    def split(self):
+        return self.data["train"], self.data["test"], self.data["validation"]
+    
+if __name__ == "__main__":
+    wikitext = WikiText103()
+    print(len(wikitext))
+    train, test, val = wikitext.split()
+    print(len(train), len(test), len(val))
+    print(train[0])

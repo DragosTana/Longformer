@@ -4,5 +4,6 @@ scipy
 torch
 torchtext
 transformers
+datasets
 tqdm
 wandb
