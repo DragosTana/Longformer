@@ -10,7 +10,7 @@ from torch.optim.optimizer import Optimizer
 from torch.optim.lr_scheduler import _LRScheduler
 
 class WarmupScheduler(_LRScheduler):
-    """Cussom learning rate scheduler with linear warmup."""
+    """Custom learning rate scheduler with linear warmup."""
     
     def __init__(self, optimizer: Optimizer, warmup_steps: int, after_scheduler: _LRScheduler, last_epoch: int = -1):
         self.warmup_steps = warmup_steps
