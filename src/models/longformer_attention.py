@@ -152,9 +152,11 @@ class LongformerSelfAttention(nn.Module):
             
         if output_attentions:
             if global_mask is not None:
-                attn_weights = attn_weights.view(batch_size, self.num_attention_heads, max_num_global_tokens, sequence_length)
+                attention_probs = attention_probs.view(
+                    batch_size, self.num_attention_heads, max_num_global_tokens, sequence_length
+                )
             else:
-                attn_weights = attn_weights.permute(0, 2, 1, 3)
+                attention_probs = attention_probs.permute(0, 2, 1, 3)
         attention = attention.transpose(0, 1)
-        return attention, attn_weights if output_attentions else attention
+        return attention, attention_probs if output_attentions else attention
     
