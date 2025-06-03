@@ -11,7 +11,7 @@ if path not in sys.path:
 
 from longformer import Longformer, LongformerForMaskedLM, LongformerForSequenceClassification
 from config import LongformerConfig
-from sliding_chunks import pad_to_window_size
+from src.models.banded_gemm import pad_to_window_size
 
 class TestLongformer(unittest.TestCase):
     
@@ -69,10 +69,9 @@ class TestLongformer(unittest.TestCase):
         loss = output_tensor[0].sum()
         loss.backward()
         optimizer.step()
-        
-        for param, name in zip(model.parameters(), model.state_dict()):
-            if param.grad is None:
-                print(name)
+
+        has_grad = any(param.grad is not None for param in model.parameters())
+        self.assertTrue(has_grad, "No gradients found for model parameters")
             
 if __name__ == "__main__":
     unittest.main() 
