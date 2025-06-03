@@ -327,7 +327,7 @@ class MyDistiBertClassification(nn.Module):
         attention_mask = batch['attention_mask']
         labels = batch['labels']
         outputs = self(input_ids, attention_mask)
-        loss = nn.CrossEntropyLoss(outputs.view(-1, self.num_labels), labels.view(-1))
+        loss = nn.CrossEntropyLoss()(outputs.view(-1, self.num_labels), labels.view(-1))
         return loss, outputs
     
 class MyDistilBertForQuestionAnswering(nn.Module):
